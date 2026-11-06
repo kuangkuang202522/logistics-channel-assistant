@@ -2,7 +2,7 @@
 
 马帮 FBA 货件页的 Tampermonkey 助手：自动识别物流渠道、美国 5 货件分组、加拿大分区、德英货代选择，并支持按“仓库 + 货代 + 渠道”自动勾选货件并生成发货单。
 
-当前版本：**v1.3.2**
+当前版本：**v1.3.3**
 
 ## 安装
 
@@ -23,8 +23,8 @@
 脚本头部包含：
 
 ```text
-// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/logistics-channel-assistant.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/logistics-channel-assistant.user.js
+// @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 ```
 
 Tampermonkey 会定期检查 `@updateURL`，发现 `@version` 变大就自动更新。
@@ -32,7 +32,7 @@ Tampermonkey 会定期检查 `@updateURL`，发现 `@version` 变大就自动更
 ## 发布新版本
 
 1. 修改 `logistics-channel-assistant.user.js`。
-2. **必须把 `@version` 往上加**（例如 `1.3.2` → `1.3.3`）。
+2. **必须把 `@version` 往上加**（例如 `1.3.3` → `1.3.4`）。
 3. 提交并推送到 `main` 分支。
 4. 用户端 Tampermonkey 会在下次检查时自动更新；也可以手动点“检查更新”。
 
