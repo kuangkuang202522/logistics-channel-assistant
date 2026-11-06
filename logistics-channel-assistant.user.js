@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         物流渠道判断助手
 // @namespace    local.logistics.channel
-// @version      1.3.2
-// @homepageURL  https://YOUR_GITHUB_USERNAME.github.io/YOUR_REPO/
-// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/logistics-channel-assistant.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO/main/logistics-channel-assistant.user.js
-// @supportURL   https://github.com/YOUR_GITHUB_USERNAME/YOUR_REPO/issues
-// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.3.2 去掉顶部粘贴框，运输方式读取子SKU行 printRemark，方式列可反复修改
+// @version      1.3.3
+// @homepageURL  https://kuangkuang202522.github.io/logistics-channel-assistant/
+// @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
+// @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
+// @supportURL   https://github.com/kuangkuang202522/logistics-channel-assistant/issues
+// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.3.3 按当前页票数分流：少于5票快速识别，5票及以上完整识别
 // @author       local
 // @match        https://www.mabangerp.com/*
 // @match        https://amz1.mabangerp.com/*
@@ -1076,9 +1076,52 @@
   }
 
   // SKU 多时，VXE 表格可能是虚拟滚动/分批加载；先展开并滚到底，等行数稳定再读。
-  async function prepareTableForRead() {
+  // 快速统计当前页：不展开、不滚动，只读现有 VXE 数据。
+  // expected = min(服务端 total, pageSize)，用来区分“真的只有 1–4 票”和“5 票但没加载全”。
+  function quickPageStats() {
+    const tables = Array.from(document.querySelectorAll('.vxe-table'));
+    const seen = new Set();
+    for (const table of tables) {
+      const vm = table.__vue__;
+      if (!vm || typeof vm.getTableData !== 'function') continue;
+      const td = vm.getTableData() || {};
+      const data = td.fullData || td.tableData || [];
+      for (const item of data) {
+        if (!item || item.parentId) continue;
+        const no = shippNoOf(item);
+        if (no) seen.add(no);
+      }
+    }
+    let total = 0, pageSize = 0;
+    for (const table of tables) {
+      let vm = table.__vue__;
+      while (vm) {
+        const d = vm._data || {};
+        const t = Number(d.total);
+        const p = Number(d.pageSize);
+        if (Number.isFinite(t) && Number.isFinite(p) && Array.isArray(d.tableData)) {
+          total = t; pageSize = p; break;
+        }
+        vm = vm.$parent;
+      }
+      if (total > 0 && pageSize > 0) break;
+    }
+    const expected = total > 0 && pageSize > 0 ? Math.min(total, pageSize) : seen.size;
+    return { unique: seen.size, total, pageSize, expected };
+  }
+
+  async function prepareTableForRead(expected = 0) {
     const tables = Array.from(document.querySelectorAll('.vxe-table'));
     if (!tables.length) return;
+
+    // 父货件行已经够数了：不需要展开、不需要滚动，直接返回。
+    // 多 SKU 的慢滚动只在“少读了父行”时才用。
+    const before = quickPageStats();
+    if (expected > 0 && before.unique >= expected) {
+      await new Promise(r => setTimeout(r, 100));
+      return;
+    }
+
     tables.forEach(t => {
       const vm = t.__vue__;
       if (!vm) return;
@@ -1153,15 +1196,28 @@
 
   let loadToken = 0;
   let preparedForToken = 0;
-  async function loadFromPage(renderNow = true, retry = 0, token = 0, accumulated = null) {
+  async function loadFromPage(renderNow = true, retry = 0, token = 0, accumulated = null, forceFull = false) {
     if (!token) token = ++loadToken;
     if (token !== loadToken) return;
+
+    const stats = quickPageStats();
+    const expected = stats.expected;
+    // 少于 5 票：快速路径，不展开、不滚动、不重读。
+    // 5 票及以上：完整路径，处理“多 SKU 导致 5 票里少读 1–2 票”。
+    const needFull = forceFull || expected >= 5;
+
     if (preparedForToken !== token && document.querySelectorAll('.vxe-table').length) {
-      setStatus('正在加载全部货件（SKU 多时需要十几秒到几十秒）…');
-      await prepareTableForRead();
+      if (needFull) {
+        setStatus(`正在完整识别（当前页约 ${expected || '?'} 票，SKU 较多）…`);
+        await prepareTableForRead(expected);
+      } else {
+        setStatus(`正在快速识别（当前页 ${stats.unique || expected || '?'} 票）…`);
+        await new Promise(r => setTimeout(r, 150));
+      }
       preparedForToken = token;
       if (token !== loadToken) return;
     }
+
     const found = readPageRows();
     if (found.rows.length) {
       ROWS = mergeRowsByNo(accumulated, found.rows);
@@ -1171,20 +1227,31 @@
         r.manualCarrier = ''; r.manualZone = ''; r.manualMethod = ''; r.carrierTouched = false;
       });
       if (renderNow) render();
-      const incomplete = incompleteUsGroups(ROWS);
+
+      // 快速路径如果读到的票数少于服务端当前页应有票数，转完整识别一次（兜底）。
+      if (!needFull && expected > 0 && ROWS.length < expected && retry < 1) {
+        setStatus(`快速识别只读到 ${ROWS.length}/${expected} 票，转为完整识别…`);
+        preparedForToken = 0;
+        await new Promise(r => setTimeout(r, 300));
+        return loadFromPage(renderNow, retry + 1, token, ROWS, true);
+      }
+
+      // 只有“当前页正好 5 票”才检查 5 票组是否少票。
+      // 1–4 票是正常小页，不再重读；10 票等多组页面也不做无意义的整页重读。
+      const incomplete = needFull && ROWS.length === 5 ? incompleteUsGroups(ROWS) : [];
       const missing = ROWS.filter(r => r.methodMissing).length;
-      // 某个“5票组”只读到 1–4 票，说明虚拟滚动还没加载全，自动重滚重读并合并。
       if (incomplete.length && retry < 3) {
         const desc = incomplete.map(([name, n]) => `「${name}」${n}票`).join('、');
         setStatus(`已读 ${ROWS.length} 票，但 ${desc} 不足5票，正在重新滚动读取…（${retry + 1}/3）`);
         preparedForToken = 0;
         await new Promise(r => setTimeout(r, 900));
-        return loadFromPage(renderNow, retry + 1, token, ROWS);
+        return loadFromPage(renderNow, retry + 1, token, ROWS, true);
       }
+
       const incompleteNote = incomplete.length
         ? ` 注意：${incomplete.map(([name, n]) => `「${name}」只读到${n}票`).join('、')}，表格可能仍未加载完；请手动滚动到底后再点「读取当前页」。`
         : '';
-      setStatus(`已自动读取当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。`
+      setStatus(`已${needFull ? '完整' : '快速'}识别当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。`
         + incompleteNote
         + (missing ? `有 ${missing} 票未识别运输方式，可在顶部「运输方式」批量选，或在结果表「方式」列逐票选；` : '')
         + '如需换页，翻页后再点「读取当前页」。');
@@ -1192,7 +1259,7 @@
       // 表格如果出现得晚，给两次重新展开/滚动的机会。
       if (retry === 10 || retry === 20) preparedForToken = 0;
       setStatus(`正在等待货件表格加载…（${retry + 1}/30）`);
-      setTimeout(() => loadFromPage(renderNow, retry + 1, token, accumulated), 500);
+      setTimeout(() => loadFromPage(renderNow, retry + 1, token, accumulated, forceFull), 500);
     } else {
       if (renderNow) resultEl.innerHTML = '<div class="lca-hint">当前页未识别到 FBA 货件。</div>';
       setStatus('当前页未识别到 FBA 货件；请确认在马帮 FBA 货件页、页面已加载完，或点「读取当前页」重试。');
