@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         物流渠道判断助手
 // @namespace    local.logistics.channel
-// @version      1.3.3
+// @version      1.4.0
 // @homepageURL  https://kuangkuang202522.github.io/logistics-channel-assistant/
 // @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @supportURL   https://github.com/kuangkuang202522/logistics-channel-assistant/issues
-// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.3.3 按当前页票数分流：少于5票快速识别，5票及以上完整识别
+// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别
 // @author       local
 // @match        https://www.mabangerp.com/*
 // @match        https://amz1.mabangerp.com/*
@@ -30,13 +30,13 @@
   const isOuterFbaPage = window.top === window.self &&
     /[?&]mod=main\.fbaCargo(?:&|$)/.test(location.search);
   if (isOuterFbaPage) {
-    console.info('[物流渠道助手] 外层 FBA 页面：脚本会在内层 amz1 iframe 中运行；若右下角没有按钮，请把篡改猴的「运行于 iframe」设为「所有」。');
+    console.info('[物流渠道助手] 外层 FBA 页面：脚本会在内层 amz1 iframe 中运行；若右下角没有按钮，请把篡改猴的「仅在顶层页面（框架）运行」设为「否」。');
     return;
   }
   const hasFbaIframe = window.top === window.self &&
     Array.from(document.querySelectorAll('iframe')).some(f => /fbaCargo/i.test(f.src || ''));
   if (hasFbaIframe) {
-    console.info('[物流渠道助手] 检测到 fbaCargo iframe：请在篡改猴脚本设置中允许「运行于 iframe = 所有」，否则内层表格读不到。');
+    console.info('[物流渠道助手] 检测到 fbaCargo iframe：请在篡改猴脚本设置中把「仅在顶层页面（框架）运行」设为「否」，否则内层表格读不到。');
     return;
   }
 
@@ -976,6 +976,8 @@
       input[type=number]{width:64px}
       .lca-primary{border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;padding:8px 16px;cursor:pointer}
       .lca-primary:hover{background:#1d4ed8}
+      .lca-primary.lca-warn{background:#f59e0b}
+      .lca-primary.lca-warn:hover{background:#d97706}
       .lca-secondary{border:1px solid #d9dce1;border-radius:8px;background:#fff;color:#334155;padding:8px 12px;cursor:pointer}
       .lca-secondary:hover{background:#f8fafc}
       .lca-hint{font-size:12px;color:#6b7280;margin-top:8px;line-height:1.5}
@@ -1036,10 +1038,10 @@
             <label>德国货代 <select id="lca-de"><option>铭运</option><option>瑞易达</option></select></label>
             <label>英国货代 <select id="lca-uk"><option>瑞易达</option><option>铭运</option></select></label>
             <label>加拿大货代 <select id="lca-ca"><option>铭运</option><option>瑞易达</option></select></label>
-            <button id="lca-read" class="lca-primary" type="button">读取当前页</button>
+            <button id="lca-read" class="lca-primary" type="button">快速读取（约0.5秒）</button>
             <button id="lca-copy" class="lca-secondary" type="button">复制结果</button>
           </div>
-          <div class="lca-hint">打开面板会自动读取当前页的 FBA 货件。美国：同一个「货件名称」下的 5 个货件为一组，天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家；不是 5 个一组的美国海运默认全部天盛，可在结果表里改货代。其他国家按上面选定的货代自动带出渠道。</div>
+          <div class="lca-hint">打开面板会自动快速读取当前页（约0.5秒）。如果提示识别不全，再点一次同一按钮做全量识别。美国：同一个「货件名称」下的 5 个货件为一组，天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家；不是 5 个一组的美国海运默认全部天盛，可在结果表里改货代。其他国家按上面选定的货代自动带出渠道。</div>
           <div id="lca-status" class="lca-hint"></div>
         </div>
         <div class="lca-card" id="lca-result"><div class="lca-hint">结果会显示在这里。</div></div>
@@ -1050,13 +1052,25 @@
 
   const $ = (sel) => shadow.querySelector(sel);
   const panel = $('#lca-panel'), btn = $('#lca-btn'), resultEl = $('#lca-result'), statusEl = $('#lca-status');
+  const readBtn = $('#lca-read');
   const genEl = $('#lca-gen');
   let GEN_GROUPS = [];
   let autoRead = false;
+  let quickIncomplete = false;
 
   function setStatus(text) {
     if (statusEl) statusEl.textContent = text || '';
   }
+
+  function setReadButton(mode) {
+    if (!readBtn) return;
+    readBtn.classList.toggle('lca-warn', mode === 'full');
+    if (mode === 'full') readBtn.textContent = '识别不全，点此全量识别';
+    else if (mode === 'reading-full') readBtn.textContent = '全量识别中…';
+    else if (mode === 'reading-quick') readBtn.textContent = '快速识别中…';
+    else readBtn.textContent = '快速读取（约0.5秒）';
+  }
+  setReadButton('quick');
 
   function getVxeTableVms() {
     return Array.from(document.querySelectorAll('.vxe-table'))
@@ -1202,16 +1216,18 @@
 
     const stats = quickPageStats();
     const expected = stats.expected;
-    // 少于 5 票：快速路径，不展开、不滚动、不重读。
-    // 5 票及以上：完整路径，处理“多 SKU 导致 5 票里少读 1–2 票”。
-    const needFull = forceFull || expected >= 5;
+    // v1.4.0：默认永远先走快速路径，不自动全量。
+    // 快速读不全时，只把同一个按钮切换成“全量识别”，由用户手动再点一次。
+    const needFull = !!forceFull;
 
     if (preparedForToken !== token && document.querySelectorAll('.vxe-table').length) {
       if (needFull) {
-        setStatus(`正在完整识别（当前页约 ${expected || '?'} 票，SKU 较多）…`);
+        setStatus(`正在全量识别（当前页约 ${expected || '?'} 票，SKU 较多，可能需要几秒）…`);
+        setReadButton('reading-full');
         await prepareTableForRead(expected);
       } else {
         setStatus(`正在快速识别（当前页 ${stats.unique || expected || '?'} 票）…`);
+        setReadButton('reading-quick');
         await new Promise(r => setTimeout(r, 150));
       }
       preparedForToken = token;
@@ -1228,33 +1244,37 @@
       });
       if (renderNow) render();
 
-      // 快速路径如果读到的票数少于服务端当前页应有票数，转完整识别一次（兜底）。
-      if (!needFull && expected > 0 && ROWS.length < expected && retry < 1) {
-        setStatus(`快速识别只读到 ${ROWS.length}/${expected} 票，转为完整识别…`);
-        preparedForToken = 0;
-        await new Promise(r => setTimeout(r, 300));
-        return loadFromPage(renderNow, retry + 1, token, ROWS, true);
-      }
+      const short = expected > 0 && ROWS.length < expected;
+      const incompleteGroups = ROWS.length === 5 ? incompleteUsGroups(ROWS) : [];
+      const incomplete = short || incompleteGroups.length > 0;
 
-      // 只有“当前页正好 5 票”才检查 5 票组是否少票。
-      // 1–4 票是正常小页，不再重读；10 票等多组页面也不做无意义的整页重读。
-      const incomplete = needFull && ROWS.length === 5 ? incompleteUsGroups(ROWS) : [];
-      const missing = ROWS.filter(r => r.methodMissing).length;
-      if (incomplete.length && retry < 3) {
-        const desc = incomplete.map(([name, n]) => `「${name}」${n}票`).join('、');
-        setStatus(`已读 ${ROWS.length} 票，但 ${desc} 不足5票，正在重新滚动读取…（${retry + 1}/3）`);
+      // 全量路径：仍然自动重试 3 次，尽量把虚拟滚动里没加载的行读出来。
+      if (needFull && incomplete && retry < 3) {
+        const desc = incompleteGroups.length
+          ? incompleteGroups.map(([name, n]) => `「${name}」${n}票`).join('、')
+          : `只读到 ${ROWS.length}/${expected || '?'} 票`;
+        setStatus(`全量识别已读 ${ROWS.length} 票，但 ${desc}，正在重新滚动读取…（${retry + 1}/3）`);
         preparedForToken = 0;
         await new Promise(r => setTimeout(r, 900));
         return loadFromPage(renderNow, retry + 1, token, ROWS, true);
       }
 
-      const incompleteNote = incomplete.length
-        ? ` 注意：${incomplete.map(([name, n]) => `「${name}」只读到${n}票`).join('、')}，表格可能仍未加载完；请手动滚动到底后再点「读取当前页」。`
+      quickIncomplete = incomplete;
+      setReadButton(incomplete ? 'full' : 'quick');
+
+      const missing = ROWS.filter(r => r.methodMissing).length;
+      const incompleteNote = incomplete
+        ? (short
+            ? `只读到 ${ROWS.length}/${expected || '?'} 票，可能未加载全；`
+            : `有5票组不足5票（${incompleteGroups.map(([name, n]) => `「${name}」${n}票`).join('、')}），可能未加载全；`)
         : '';
-      setStatus(`已${needFull ? '完整' : '快速'}识别当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。`
+      const nextHint = incomplete
+        ? '再点一次「识别不全，点此全量识别」进行全量识别。'
+        : '如需换页，翻页后再点「快速读取」。';
+      setStatus(`已${needFull ? '全量' : '快速'}识别当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。`
         + incompleteNote
         + (missing ? `有 ${missing} 票未识别运输方式，可在顶部「运输方式」批量选，或在结果表「方式」列逐票选；` : '')
-        + '如需换页，翻页后再点「读取当前页」。');
+        + nextHint);
     } else if (retry < 30) {
       // 表格如果出现得晚，给两次重新展开/滚动的机会。
       if (retry === 10 || retry === 20) preparedForToken = 0;
@@ -1262,7 +1282,8 @@
       setTimeout(() => loadFromPage(renderNow, retry + 1, token, accumulated, forceFull), 500);
     } else {
       if (renderNow) resultEl.innerHTML = '<div class="lca-hint">当前页未识别到 FBA 货件。</div>';
-      setStatus('当前页未识别到 FBA 货件；请确认在马帮 FBA 货件页、页面已加载完，或点「读取当前页」重试。');
+      setReadButton('quick');
+      setStatus('当前页未识别到 FBA 货件；请确认在马帮 FBA 货件页、页面已加载完，或点「快速读取」重试。');
     }
   }
 
@@ -1279,7 +1300,16 @@
   btn.addEventListener('click', () => togglePanel());
   $('#lca-min').addEventListener('click', () => togglePanel(false));
   $('#lca-close').addEventListener('click', () => togglePanel(false));
-  $('#lca-read').addEventListener('click', () => loadFromPage());
+  if (readBtn) {
+    readBtn.addEventListener('click', () => {
+      if (quickIncomplete) {
+        quickIncomplete = false;
+        loadFromPage(true, 0, 0, null, true);
+      } else {
+        loadFromPage();
+      }
+    });
+  }
 
   function readOptions() {
     return {
@@ -1373,7 +1403,7 @@
     if (!genEl) return;
     if (ROWS_SOURCE !== 'vxe') {
       GEN_GROUPS = [];
-      genEl.innerHTML = '<div class="lca-hint">生成发货单需要读取马帮表格数据；当前是页面文本模式，请在马帮 FBA 货件页点「读取当前页」。</div>';
+      genEl.innerHTML = '<div class="lca-hint">生成发货单需要读取马帮表格数据；当前是页面文本模式，请在马帮 FBA 货件页点「快速读取」。</div>';
       return;
     }
     const groups = buildGenerationGroups();
