@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         物流渠道判断助手
 // @namespace    local.logistics.channel
-// @version      1.4.0
+// @version      1.5.0
 // @homepageURL  https://kuangkuang202522.github.io/logistics-channel-assistant/
 // @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @supportURL   https://github.com/kuangkuang202522/logistics-channel-assistant/issues
-// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别
+// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别；v1.4.1 只在 FBA 货件页显示，切到其他页面自动隐藏；v1.5.0 美国海运5票组支持逐票改货代（3票天盛+2票其他），美国空运默认天盛、可选瑞易达
 // @author       local
 // @match        https://www.mabangerp.com/*
 // @match        https://amz1.mabangerp.com/*
@@ -37,6 +37,17 @@
     Array.from(document.querySelectorAll('iframe')).some(f => /fbaCargo/i.test(f.src || ''));
   if (hasFbaIframe) {
     console.info('[物流渠道助手] 检测到 fbaCargo iframe：请在篡改猴脚本设置中把「仅在顶层页面（框架）运行」设为「否」，否则内层表格读不到。');
+    return;
+  }
+
+  // v1.4.1：只在 FBA 货件页（内层 amz1/fbaCargo）显示。
+  // 其他页面不创建悬浮按钮，切走时自动隐藏，避免挡住别的按钮。
+  function isFbaCargoPage() {
+    return /^amz\d*\.mabangerp\.com$/i.test(location.hostname) &&
+      /\/fbaCargo(?:\/|$)/i.test(location.pathname);
+  }
+  if (!isFbaCargoPage() && !IS_INVOICE_PAGE) {
+    console.info('[物流渠道助手] 只在 FBA 货件页显示；当前页面不加载悬浮按钮。');
     return;
   }
 
@@ -73,6 +84,11 @@
     '天盛': { 美东: '盛森提', 美中: '美中-盛森达Pro', 美西: '美西-盛森达Pro' },
     '瑞易达': { 美东: '美森限时达', 美中: '美中-美森正班卡派', 美西: '美西-美森正班卡派' },
     '铭运': { 美东: '美森快船正班船-UPS派', 美中: '美中-美森快船正班船-卡派', 美西: '美西-美森快船正班船-卡派' }
+  };
+  // 美国空运：默认天盛；瑞易达走美国空运-CN。药贴只影响天盛的渠道（天敏提）。
+  const US_AIR = {
+    '天盛': { '普货': '天翼提', '药贴': '天敏提' },
+    '瑞易达': '美国空运-CN'
   };
   const CA_SEA = {
     '铭运': { 加东: '加东-美转加美森正班限时达-卡派', 加西: '加西-美转加美森正班限时达-卡派', 其余: '美转加美森正班限时达-UPS派' },
@@ -130,6 +146,7 @@
     '铭运|英国卡航-递延': '英国卡航-递延（不包税）',
     '瑞易达|美中-美森正班卡派': '美森卡派',
     '瑞易达|美西-美森正班卡派': '美森卡派',
+    '瑞易达|美国空运-CN': '美国空运-CN',
     '瑞易达|加拿大海运': '加拿大美森海卡',
     '瑞易达|欧洲空运CN': '欧洲空运-CN',
     '瑞易达|英国空运-CN': '英国空运-CN',
@@ -363,6 +380,7 @@
           weight: pick(item, ['total_weights', 'totalWeight', 'weight', '装箱总重量']),
           address: String(address || ''),
           name: pick(item, ['shipment_name', 'shipmentName', 'shippName', 'name', 'content', 'remark', '货件名称']),
+          batch: pick(item, ['batchNo', 'batch_no', 'batchNumber', 'batch_number', 'inbound_planid', 'inboundPlanId', 'inbound_plan_id', 'planId', 'plan_id']),
           warehouseId,
           warehouseName,
           multiWarehouse: whPairs.length > 1
@@ -477,8 +495,9 @@
     if (c === '美国') {
       if (method === '海运') return (US_SEA[carrier] && US_SEA[carrier][zone]) || '';
       if (method === '空运') {
-        if (carrier === '天盛') return airtype === '药贴' ? '天敏提' : '天翼提';
-        return '';
+        const air = US_AIR[carrier];
+        if (!air) return '';
+        return typeof air === 'string' ? air : (air[airtype] || air['普货'] || '');
       }
       if (method === '快递') return EXPRESS[carrier] || '';
       return '';
@@ -1033,6 +1052,9 @@
             <label>美国空运货型
               <select id="lca-airtype"><option>普货</option><option>药贴</option></select>
             </label>
+            <label>美国空运货代
+              <select id="lca-usair"><option>天盛</option><option>瑞易达</option></select>
+            </label>
           </div>
           <div class="lca-row">
             <label>德国货代 <select id="lca-de"><option>铭运</option><option>瑞易达</option></select></label>
@@ -1041,7 +1063,7 @@
             <button id="lca-read" class="lca-primary" type="button">快速读取（约0.5秒）</button>
             <button id="lca-copy" class="lca-secondary" type="button">复制结果</button>
           </div>
-          <div class="lca-hint">打开面板会自动快速读取当前页（约0.5秒）。如果提示识别不全，再点一次同一按钮做全量识别。美国：同一个「货件名称」下的 5 个货件为一组，天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家；不是 5 个一组的美国海运默认全部天盛，可在结果表里改货代。其他国家按上面选定的货代自动带出渠道。</div>
+          <div class="lca-hint">打开面板会自动快速读取当前页（约0.5秒）。如果提示识别不全，再点一次同一按钮做全量识别。美国海运：优先按马帮批次号、其次按「货件名称」，5票一组；都没有就按连续5票归组。天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家。结果表里每一票的货代都能单独改，改完立即生效；改组设置/配额会重置本组手工货代。美国空运默认天盛，可在这里选瑞易达，也可逐票改。其他国家按上面选定的货代自动带出渠道。</div>
           <div id="lca-status" class="lca-hint"></div>
         </div>
         <div class="lca-card" id="lca-result"><div class="lca-hint">结果会显示在这里。</div></div>
@@ -1071,6 +1093,26 @@
     else readBtn.textContent = '快速读取（约0.5秒）';
   }
   setReadButton('quick');
+
+  // v1.4.1：SPA 路由变化时同步显示/隐藏；离开 FBA 货件页后按钮不再挡其他页面。
+  function syncFbaVisibility() {
+    const onFba = isFbaCargoPage();
+    host.style.display = onFba ? '' : 'none';
+    if (!onFba) {
+      panel.classList.remove('open');
+      btn.textContent = '物流渠道';
+    }
+  }
+  syncFbaVisibility();
+  let lastHref = location.href;
+  setInterval(function () {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
+      syncFbaVisibility();
+    }
+  }, 800);
+  window.addEventListener('popstate', syncFbaVisibility);
+  window.addEventListener('hashchange', syncFbaVisibility);
 
   function getVxeTableVms() {
     return Array.from(document.querySelectorAll('.vxe-table'))
@@ -1312,16 +1354,28 @@
   }
 
   function readOptions() {
+    const quotaRaw = parseInt($('#lca-quota').value, 10);
     return {
       methodSel: $('#lca-method').value,
       useUsGroup: $('#lca-usgroup').checked,
-      quota: parseInt($('#lca-quota').value, 10) || 0,
+      quota: Number.isFinite(quotaRaw) ? Math.max(0, Math.min(5, quotaRaw)) : 0,
       other: $('#lca-other').value,
       airtype: $('#lca-airtype').value,
+      usAirCarrier: $('#lca-usair').value || '天盛',
       deCarrier: $('#lca-de').value,
       ukCarrier: $('#lca-uk').value,
       caCarrier: $('#lca-ca').value
     };
+  }
+
+  function resetUsCarrierOverrides(kind = 'all') {
+    ROWS.forEach(r => {
+      if (r.country !== '美国') return;
+      if (kind === 'sea' && r.method !== '海运') return;
+      if (kind === 'air' && r.method !== '空运') return;
+      r.carrierTouched = false;
+      r.manualCarrier = '';
+    });
   }
 
   function analyze() {
@@ -1355,38 +1409,55 @@
     usRows.forEach(r => { r.group = ''; r.assigned = ''; });
 
     if (opts.useUsGroup) {
-      const byName = {}, unnamed = [];
+      const seaRows = usRows.filter(r => r.method === '海运');
+      const groupedRows = new Set();
       let gid = 0;
-      usRows.forEach(r => { if (r.name) (byName[r.name] = byName[r.name] || []).push(r); else unnamed.push(r); });
-      Object.keys(byName).forEach(name => {
-        const group = byName[name];
-        if (group.length !== 5) return;
+      const assignGroup = (group) => {
+        if (!group.length) return;
         gid += 1;
         const ordered = group.slice().sort((a, b) => (priority[a.zone] - priority[b.zone]) || (a.idx - b.idx));
         ordered.forEach((r, k) => {
           r.group = '第' + gid + '组';
           r.assigned = k < opts.quota ? '天盛' : opts.other;
+          groupedRows.add(r);
         });
+      };
+      // 1) 优先按马帮批次号分组；同一批次正好 5 票最可靠。
+      const byBatch = new Map();
+      seaRows.forEach(r => {
+        if (!r.batch) return;
+        if (!byBatch.has(r.batch)) byBatch.set(r.batch, []);
+        byBatch.get(r.batch).push(r);
       });
-      for (let start = 0; start + 5 <= unnamed.length; start += 5) {
-        const group = unnamed.slice(start, start + 5);
-        gid += 1;
-        const ordered = group.slice().sort((a, b) => (priority[a.zone] - priority[b.zone]) || (a.idx - b.idx));
-        ordered.forEach((r, k) => {
-          r.group = '第' + gid + '组';
-          r.assigned = k < opts.quota ? '天盛' : opts.other;
-        });
+      byBatch.forEach(group => { if (group.length === 5) assignGroup(group); });
+      // 2) 没有批次号或批次不齐的，再按货件名称分；名称必须正好 5 票。
+      const byName = new Map();
+      seaRows.filter(r => !groupedRows.has(r)).forEach(r => {
+        if (!r.name) return;
+        if (!byName.has(r.name)) byName.set(r.name, []);
+        byName.get(r.name).push(r);
+      });
+      byName.forEach(group => { if (group.length === 5) assignGroup(group); });
+      // 3) 名称不同或没有名称的，按页面顺序把连续 5 票美国海运归一组。
+      const remaining = seaRows
+        .filter(r => !groupedRows.has(r))
+        .sort((a, b) => a.idx - b.idx);
+      for (let start = 0; start + 5 <= remaining.length; start += 5) {
+        assignGroup(remaining.slice(start, start + 5));
       }
     }
 
     ROWS.forEach(r => {
       if (r.country === '美国') {
-        // IMO1/ITX3/ICA3 是盛森提特例仓：即使 5 票组里超过天盛配额，也强制归天盛。
-        if (r.method === '海运' && isTsSpecialWarehouse(r.wh)) r.assigned = '天盛';
-        if (r.assigned) r.carrier = r.assigned;
-        else if (r.carrierTouched) r.carrier = r.manualCarrier;
+        // 手工改过的货代优先；否则用 5 票组默认，再否则海运默认天盛、空运默认美国空运货代。
+        if (r.carrierTouched) r.carrier = r.manualCarrier || '';
+        else if (r.assigned) r.carrier = r.assigned;
         else if (r.method === '海运') r.carrier = '天盛';
+        else if (r.method === '空运') r.carrier = opts.usAirCarrier || '天盛';
         else r.carrier = '';
+
+        // IMO1/ITX3/ICA3 是盛森提特例仓：海运即使超过天盛配额也强制归天盛。
+        if (r.method === '海运' && isTsSpecialWarehouse(r.wh)) r.carrier = '天盛';
       } else if (r.country === '加拿大') r.carrier = opts.caCarrier;
       else if (r.country === '英国') r.carrier = opts.ukCarrier;
       else if (r.country === '德国') r.carrier = opts.deCarrier;
@@ -1465,10 +1536,11 @@
       if (r.channel && r.channel.indexOf('待确认') === 0) warn += ' <span class="bad">渠道待确认</span>';
 
       let carrierCell;
-      if (r.country === '美国' && !r.assigned) {
+      if (r.country === '美国') {
         const options = ['天盛', '瑞易达', '铭运'].map(c =>
           `<option value="${esc(c)}"${r.carrier === c ? ' selected' : ''}>${esc(c)}</option>`).join('');
-        carrierCell = `<select data-carrier-no="${esc(r.no)}"><option value=""${r.carrier ? '' : ' selected'}>待选</option>${options}</select>`
+        carrierCell = `<select data-carrier-no="${esc(r.no)}" title="可单独改这一票；改组设置会重置">`
+          + `<option value=""${r.carrier ? '' : ' selected'}>待选</option>${options}</select>`
           + (r.group ? ` <span class="group">${esc(r.group)}</span>` : ' <span class="group">单票</span>');
       } else {
         carrierCell = esc(r.carrier || '') + (r.group ? ` <span class="group">${esc(r.group)}</span>` : '');
@@ -1529,6 +1601,24 @@
       const row = ROWS.find(r => r.no === t.getAttribute('data-cazone-no'));
       if (row) { row.manualZone = t.value; render(); }
     }
+  });
+
+  // 分组/配额/另一家变化：清掉美国海运的手工货代，让新的组默认生效。
+  ['#lca-usgroup', '#lca-other'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('change', () => { resetUsCarrierOverrides('sea'); render(); });
+  });
+  const quotaEl = $('#lca-quota');
+  if (quotaEl) quotaEl.addEventListener('input', () => { resetUsCarrierOverrides('sea'); render(); });
+  const usAirEl = $('#lca-usair');
+  if (usAirEl) usAirEl.addEventListener('change', () => { resetUsCarrierOverrides('air'); render(); });
+  // 运输方式/空运货型/其他国家货代变化：直接重算。
+  ['#lca-method', '#lca-airtype', '#lca-de', '#lca-uk', '#lca-ca'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('change', () => {
+      if (sel === '#lca-method') resetUsCarrierOverrides('all');
+      render();
+    });
   });
 
   genEl.addEventListener('change', (e) => {
