@@ -1,80 +1,404 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>物流渠道判断助手 · 安装与更新</title>
-  <style>
-    :root { --blue:#2563eb; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; }
-    * { box-sizing: border-box; }
-    body { margin:0; background:#f6f7f9; color:var(--ink);
-      font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; }
-    .wrap { max-width:820px; margin:0 auto; padding:48px 20px 64px; }
-    .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:28px 30px;
-      box-shadow:0 10px 30px rgba(15,23,42,.06); }
-    h1 { margin:0 0 8px; font-size:26px; }
-    .sub { color:var(--muted); margin:0 0 22px; }
-    .version { display:inline-block; background:#eff6ff; color:#1e3a8a; border-radius:999px;
-      padding:3px 10px; font-size:13px; font-weight:600; }
-    .install { display:inline-block; background:var(--blue); color:#fff; text-decoration:none;
-      border-radius:10px; padding:12px 22px; font-weight:700; font-size:16px; margin:18px 0 8px; }
-    .install:hover { background:#1d4ed8; }
-    .hint { color:var(--muted); font-size:13px; }
-    h2 { font-size:17px; margin:28px 0 10px; }
-    ol, ul { padding-left:22px; margin:8px 0; }
-    li { margin:5px 0; }
-    code { background:#f3f4f6; border-radius:6px; padding:1px 6px; font-size:13px; }
-    .note { background:#fffbeb; border:1px solid #fde68a; color:#92400e; border-radius:10px;
-      padding:12px 14px; font-size:13.5px; margin-top:18px; }
-    .footer { color:var(--muted); font-size:12.5px; margin-top:22px; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>物流渠道判断助手 v1.3.0</title>
+<style>
+  body{margin:0;padding:16px;font:15px/1.7 -apple-system,"Microsoft YaHei",sans-serif;background:#eef2f7;color:#0f172a}
+  h1{font-size:18px;margin:0 0 12px}
+  .card{background:#fff;border-radius:10px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  textarea{width:100%;height:170px;padding:10px;border:1px solid #d9dce1;border-radius:8px;font:13px/1.6 Consolas,monospace;box-sizing:border-box}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:10px}
+  label{font-size:14px;color:#555}
+  select,button,input{font-size:14px;padding:7px 10px;border-radius:8px;border:1px solid #d9dce1;background:#fff}
+  button{background:#2563eb;color:#fff;border:0;font-weight:600;cursor:pointer}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 6px;border-bottom:1px solid #eceef1;text-align:left;vertical-align:top}
+  th{background:#f3f6fb;color:#374151;font-weight:600;white-space:nowrap}
+  td.ch{font-weight:600}
+  .warn{color:#b45309}
+  .bad{color:#b91c1c}
+  .meta{color:#6b7280;font-size:13px}
+  .sum{background:#f0f7ff;border-radius:8px;padding:10px;font-size:14px;margin-top:10px}
+  .hint{font-size:13px;color:#6b7280;margin-top:8px}
+  .group{font-size:12px;color:#6b7280}
+  td select{padding:4px 6px;font-size:13px}
+
+  .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .topbar .brand{font-size:20px;font-weight:800;color:#0f172a}
+  .topbar .ver{font-size:12px;color:#64748b;background:#e2e8f0;border-radius:999px;padding:2px 8px;margin-left:6px}
+  .topbar .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .topbar a{text-decoration:none;font-size:14px;font-weight:700;border-radius:9px;padding:8px 12px}
+  .topbar a.install{background:#2563eb;color:#fff}
+  .topbar a.install:hover{background:#1d4ed8}
+  .topbar a.gh{background:#fff;color:#334155;border:1px solid #cbd5e1}
+  .topbar a.gh:hover{background:#f8fafc}
+  .lca-summary{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:2px 2px 6px}
+  .sum-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bd);background:var(--bg);color:var(--c);border-radius:999px;padding:5px 10px;font-size:12px;font-weight:700}
+  .sum-chip b{font-size:15px;line-height:1}
+  .sum-total{margin-left:auto;color:#64748b;font-size:12px;white-space:nowrap}
+  .carrier-section{background:#fff;border:1px solid #e2e8f0;border-left:5px solid var(--c);border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,.05);margin-bottom:10px}
+  .carrier-head{display:flex;align-items:center;gap:8px;padding:9px 12px;background:linear-gradient(90deg,var(--bg),#fff 70%);border-bottom:1px solid #eef2f7}
+  .carrier-badge{display:inline-flex;align-items:center;border-radius:999px;background:var(--c);color:#fff;font-size:12px;font-weight:800;padding:3px 10px;letter-spacing:.3px;white-space:nowrap}
+  .carrier-count{font-size:12.5px;font-weight:700;color:var(--c);white-space:nowrap}
+  .carrier-sub{font-size:11.5px;color:#64748b}
+  .ts{--c:#1d4ed8;--bg:#eff6ff;--bd:#bfdbfe}
+  .ryd{--c:#c2410c;--bg:#fff7ed;--bd:#fed7aa}
+  .my{--c:#6d28d9;--bg:#f5f3ff;--bd:#ddd6fe}
+  .todo{--c:#475569;--bg:#f1f5f9;--bd:#cbd5e1}
+  .pending{--c:#0f766e;--bg:#f0fdfa;--bd:#99f6e4}
+  .other{--c:#334155;--bg:#f8fafc;--bd:#e2e8f0}
+  #result table{width:100%;border-collapse:collapse;font-size:12.5px;background:#fff}
+  #result th,#result td{padding:8px 7px;border-bottom:1px solid #eef1f5;text-align:left;vertical-align:top}
+  #result th{background:#f8fafc;color:#475569;font-weight:700;white-space:nowrap}
+  #result tbody tr:nth-child(even){background:#fcfdff}
+  #result tbody tr:hover{background:#f1f5f9}
+  #result td.ch{font-weight:700;color:#111827}
+  #result td.shipno{font-family:ui-monospace,Consolas,monospace;font-weight:800;font-size:13.5px;letter-spacing:.2px;color:var(--c);white-space:nowrap}
+  #result .warn{color:#b45309}
+  #result .bad{color:#b91c1c}
+  #result .group{font-size:10.5px;color:#64748b;background:#f1f5f9;border-radius:999px;padding:1px 6px;white-space:nowrap}
+  #result select{padding:4px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:6px}
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>物流渠道判断助手</h1>
-      <p class="sub">马帮 FBA 货件页悬浮面板：自动识别物流渠道、美国 5 货件分组、加拿大分区、德英货代选择，并支持自动生成发货单。v1.5.0 支持美国海运 5 票组逐票改货代，美国空运默认天盛、可选瑞易达。默认约 0.5 秒快速识别；识别不全时，再点同一按钮做全量识别。</p>
-      <span class="version">当前版本 v1.5.0</span>
-
-      <h2>安装 / 更新</h2>
-      <a class="install" href="logistics-channel-assistant.user.js">安装 / 更新脚本</a>
-      <p class="hint">点击后 Tampermonkey 会打开安装页，确认“安装”或“更新”即可。</p>
-
-      <h2>使用前准备</h2>
-      <ol>
-        <li>浏览器先安装 <b>Tampermonkey（篡改猴）</b> 扩展。</li>
-        <li>点击上面的“安装 / 更新脚本”。</li>
-        <li>如果右下角没有“物流渠道”按钮：打开 Tampermonkey 管理面板 → 本脚本 → <b>设置</b> → <b>仅在顶层页面（框架）运行</b> → 选 <b>否</b>（英文：Run only in top frame → No），保存后刷新马帮页面。</li>
-        <li>打开马帮 FBA 货件页，右下角出现蓝色“物流渠道”按钮即生效。</li>
-      </ol>
-
-      <h2>v1.5.0 怎么用</h2>
-      <ol>
-        <li><b>只在马帮 FBA 货件页显示</b>；切到库存、发货单、TB 等其他页面会自动隐藏。</li>
-        <li>打开面板会自动<b>快速读取</b>当前页，通常约 0.5 秒。</li>
-        <li>如果状态栏提示“识别不全”，按钮会变成<b>“识别不全，点此全量识别”</b>，再点一次同一按钮即可。</li>
-        <li>全量识别会展开并滚动表格，SKU 多时需要几秒；完成后按钮恢复“快速读取”。</li>
-      </ol>
-
-      <h2>v1.5.0 两个新优化</h2>
-      <ol>
-        <li><b>美国海运 5 票组可以逐票改货代。</b>默认仍是天盛 3 票、另一家 2 票；结果表里每一票的货代都是下拉框，可直接改成天盛/瑞易达/铭运，改完立即生效。5 票组优先按马帮批次号、其次按货件名称分组，都没有时按连续 5 票归组。</li>
-        <li><b>美国空运默认天盛，可选瑞易达。</b>新增“美国空运货代”下拉：天盛（普货天翼提/药贴天敏提）或瑞易达（美国空运-CN）；结果表里每一票也能单独改。</li>
-      </ol>
-
-      <h2>自动更新</h2>
-      <ul>
-        <li>脚本头部已配置 <code>@updateURL</code> / <code>@downloadURL</code>。</li>
-        <li>Tampermonkey 默认每 24 小时检查一次更新；也可以在管理面板里点“检查更新”。</li>
-        <li>发布新版本时，只要把脚本里的 <code>@version</code> 往上加（如 1.5.0 → 1.5.1）并提交，大家会自动收到更新。</li>
-      </ul>
-
-      <div class="note">
-        如果脚本安装后读不到内层货件表格，八成是“仅在顶层页面（框架）运行”没设成“否”。按上面第 3 步设置一次即可。
-      </div>
-
-      <p class="footer">本页由 GitHub Pages 托管。脚本文件名使用英文，脚本显示名仍是“物流渠道判断助手”。</p>
-    </div>
+<div class="topbar">
+  <div class="brand">物流渠道判断助手 <span class="ver">v1.3.0</span></div>
+  <div class="actions">
+    <a class="install" href="./logistics-channel-assistant.user.js">安装 / 更新篡改猴脚本</a>
+    <a class="gh" href="https://github.com/kuangkuang202522/logistics-channel-assistant" target="_blank" rel="noopener">GitHub</a>
   </div>
+</div>
+<h1>物流渠道判断（全部国家 / 全部渠道）</h1>
+
+<div class="card">
+  <textarea id="input" placeholder="直接把马帮货件页「全选复制」的内容粘进来即可（会自己找：货件单号、店铺、国家、物流中心编码、运输方式）。
+也兼容旧格式：每行「货件号 仓库码 [地址]」，或只写仓库码。"></textarea>
+  <div class="row">
+    <label>运输方式</label>
+    <select id="method">
+      <option value="auto">自动识别（粘进来的内容里有就用）</option>
+      <option value="海运">海运</option>
+      <option value="空运">空运</option>
+      <option value="卡航">卡航</option>
+      <option value="快递">快递</option>
+      <option value="铁路">铁路</option>
+    </select>
+    <label><input type="checkbox" id="usGroup" checked style="vertical-align:-2px"> 美国按「5个货件」一组分配</label>
+    <label>天盛票数/组</label>
+    <input id="quota" type="number" min="0" max="5" value="3" style="width:60px">
+    <label>本周另一家</label>
+    <select id="other"><option>瑞易达</option><option>铭运</option></select>
+    <label>美国空运货型</label>
+    <select id="airtype"><option>普货</option><option>药贴</option></select>
+  </div>
+  <div class="row">
+    <label>德国货代</label>
+    <select id="deCarrier"><option>铭运</option><option>瑞易达</option></select>
+    <label>英国货代</label>
+    <select id="ukCarrier"><option>瑞易达</option><option>铭运</option></select>
+    <label>加拿大货代</label>
+    <select id="caCarrier"><option>铭运</option><option>瑞易达</option></select>
+    <button id="run">判断</button>
+  </div>
+  <div class="hint">美国：同一个「货件名称」下的 5 个货件为一组，天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家；不是 5 个一组的单个货件逐票手动选货代。其他国家按上面选定的货代自动带出渠道。</div>
+</div>
+
+<div class="card" id="result"><div class="meta">结果会显示在这里。</div></div>
+
+<script>
+var SPECIAL = {
+  MCI4:["美东","特例仓，需单独报关"], MEM1:["美中","特例仓"], RFD2:["美东","特例仓"],
+  TOL3:["美东","特例仓"], LAN2:["美东","特例仓"], AKR1:["美东","特例仓"],
+  LAX9:["美西","特例仓"], CMH2:["美东","特例仓"], CMH3:["美东","特例仓"],
+  BJC1:["美东","特例仓"]
+};
+var KNOWN = {
+  GYR3:"美西",GYR2:"美西",SBD1:"美西",SCK4:"美西",ONT8:"美西",LGB8:"美西",VGT2:"美西",
+  PSP3:"美西",LAS1:"美西",SMF3:"美西",MIT2:"美西",POC1:"美西",POC3:"美西",ABQ2:"美西",MCC1:"美西",
+  MQJ1:"美中",IND9:"美中",MDW2:"美中",FTW1:"美中",FWA4:"美中",IAH3:"美中",BJC1:"美东",
+  ABE8:"美东",AVP1:"美东",CLT2:"美东",TEB9:"美东",RDU2:"美东",ORF2:"美东",RMN3:"美东",
+  MQY2:"美东",HGR6:"美东",ABE1:"美东",ABE2:"美东",ABE3:"美东",ABE4:"美东",ABE5:"美东"
+};
+var CA_EAST = ["XYY4","YYZ1","YYZ2","YYZ3","YYZ4","YYZ5","YYZ6","YYZ7","YYZ8","YYZ9","Y001","YOO1","YHM1","YXU1","YGK1","YOW1","YOW2","YOW3","YUL2"];
+var CA_WEST = ["YVR1","YVR2","YVR3","YVR4","YXX2","YYC1","YYC2","YYC3","YYC4","YYC5","YYC6","YEG1","YEG2"];
+
+var US_SEA = {
+  "天盛":{美东:"盛森提",美中:"美中-盛森达Pro",美西:"美西-盛森达Pro"},
+  "瑞易达":{美东:"美森限时达",美中:"美中-美森正班卡派",美西:"美西-美森正班卡派"},
+  "铭运":{美东:"美森快船正班船-UPS派",美中:"美中-美森快船正班船-卡派",美西:"美西-美森快船正班船-卡派"}
+};
+var CA_SEA = {
+  "铭运":{加东:"加东-美转加美森正班限时达-卡派",加西:"加西-美转加美森正班限时达-卡派",其余:"美转加美森正班限时达-UPS派"},
+  "瑞易达":{加东:"加拿大海运",加西:"加拿大海运",其余:"加拿大海运"}
+};
+var CA_AIR = {"瑞易达":"加拿大空运-CN","铭运":"加拿大空运"};
+var DE_AIR = {"铭运":"欧洲空派包税B价-大陆飞","瑞易达":"欧洲空运CN"};
+var DE_TRUCK = {"铭运":"欧洲卡航-包税","瑞易达":"中欧卡航包税"};
+var UK_AIR = {"瑞易达":"英国空运-CN","铭运":"英国空派-递延不包税"};
+var UK_TRUCK = {"瑞易达":"英国卡航VAT","铭运":"英国卡航-递延"};
+var EXPRESS = {"瑞易达":"UPS-WE特快包税"};
+
+var ROWS = [];
+
+function zipOf(address){
+  var tokens = String(address || "").replace(/[-,，]/g, " ").split(" ");
+  var hits = tokens.filter(function(t){ return /^[0-9]{5}$/.test(t); });
+  return hits.length ? hits[hits.length - 1] : "";
+}
+function usRegion(code, address){
+  if (SPECIAL[code]) return SPECIAL[code];
+  var zip = zipOf(address);
+  if (zip){
+    var d = parseInt(zip[0], 10);
+    if (d <= 3) return ["美东","邮编首位"];
+    if (d <= 7) return ["美中","邮编首位"];
+    return ["美西","邮编首位"];
+  }
+  if (KNOWN[code]) return [KNOWN[code],"已核对仓表"];
+  return ["","未收录仓库"];
+}
+function caRegion(code, address){
+  if (CA_EAST.indexOf(code) >= 0) return ["加东","加拿大仓名单"];
+  if (CA_WEST.indexOf(code) >= 0) return ["加西","加拿大仓名单"];
+  var up = String(address || "").toUpperCase();
+  if (/( ON| QC| NB| NS| PE| NL)/.test(up)) return ["加东","省份缩写"];
+  if (/( BC| AB| SK| MB)/.test(up)) return ["加西","省份缩写"];
+  return ["其余","加拿大仓不在东西名单"];
+}
+function countryFromStore(store){
+  var m = String(store||"").match(/号(美国|加拿大|德国|英国)站/);
+  return m ? m[1] : "";
+}
+function parseShipments(text){
+  var re = /FBA[0-9A-Z]{8,}/g, map = {}, order = [], m, matches = [];
+  while ((m = re.exec(text)) !== null) matches.push({no:m[0], idx:m.index});
+  matches.forEach(function(item, i){
+    var end = (i + 1 < matches.length) ? matches[i+1].idx : text.length;
+    var seg = text.slice(item.idx, end);
+    var rec = map[item.no];
+    if (!rec){ rec = map[item.no] = {no:item.no, store:"", country:"", wh:"", method:"", weight:"", address:"", name:""}; order.push(item.no); }
+    var store = (seg.match(/店铺\s*([0-9]+号[^\s\n站]*站)/) || [])[1] || "";
+    var country = (seg.match(/国家\s*(美国|加拿大|德国|英国|法国|意大利|西班牙|荷兰|波兰)/) || [])[1] || "";
+    var wh = (seg.match(/物流中心编码\s*([A-Z0-9]{3,6})/) || [])[1] || "";
+    var weight = (seg.match(/装箱总重量\s*([0-9.]+)\s*kg/) || [])[1] || "";
+    var shipName = (seg.match(/货件名称\s*([A-Za-z0-9]+)/) || [])[1] || "";
+    var mm = seg.match(/(海运|空运|卡航|快递|铁路)/g);
+    var method = mm ? mm[mm.length - 1] : "";
+    if (!rec.store && store) rec.store = store;
+    if (!rec.country && country) rec.country = country;
+    if (!rec.wh && wh) rec.wh = wh.toUpperCase();
+    if (!rec.weight && weight) rec.weight = weight;
+    if (!rec.method && method) rec.method = method;
+    if (!rec.name && shipName) rec.name = shipName;
+  });
+  return order.map(function(no){ return map[no]; });
+}
+function parseLegacy(text){
+  var rows = [];
+  text.split(/\r?\n/).forEach(function(line){
+    line = line.trim();
+    if (!line) return;
+    var parts = line.split(/[\t ]+/);
+    var no = "", wh = "";
+    if (/^FBA[0-9A-Z]{8,}$/.test(parts[0])) { no = parts[0]; parts.shift(); }
+    if (parts.length && /^[A-Z]{2,4}[0-9]?$/.test(parts[0].toUpperCase())) { wh = parts[0].toUpperCase(); parts.shift(); }
+    var address = parts.join(" ");
+    if (no || wh) rows.push({no:no, store:"", country:"", wh:wh, address:address, method:"", weight:""});
+  });
+  return rows;
+}
+function parseInput(text){
+  var rows = parseShipments(text);
+  return rows.length ? rows : parseLegacy(text);
+}
+function pickChannel(row, carrier, method, airtype){
+  var c = row.country || "美国", zone = row.zone;
+  if (c === "美国"){
+    if (method === "海运") return (US_SEA[carrier] && US_SEA[carrier][zone]) || "";
+    if (method === "空运") { if (carrier === "天盛") return airtype === "药贴" ? "天敏提" : "天翼提"; return ""; }
+    if (method === "快递") return EXPRESS[carrier] || "";
+    return "";
+  }
+  if (c === "加拿大"){
+    if (method === "海运" || method === "卡航") return (CA_SEA[carrier] && CA_SEA[carrier][zone]) || "";
+    if (method === "空运") return CA_AIR[carrier] || "";
+    if (method === "快递") return EXPRESS[carrier] || "";
+    return "";
+  }
+  if (c === "德国"){
+    if (method === "空运") return DE_AIR[carrier] || "";
+    if (method === "卡航") return DE_TRUCK[carrier] || "";
+    return "";
+  }
+  if (c === "英国"){
+    if (method === "空运") return UK_AIR[carrier] || "";
+    if (method === "卡航") return UK_TRUCK[carrier] || "";
+    if (method === "快递") return EXPRESS[carrier] || "";
+    return "";
+  }
+  return "";
+}
+
+function readOptions(){
+  return {
+    methodSel: document.getElementById("method").value,
+    useUsGroup: document.getElementById("usGroup").checked,
+    quota: parseInt(document.getElementById("quota").value, 10) || 0,
+    other: document.getElementById("other").value,
+    airtype: document.getElementById("airtype").value,
+    deCarrier: document.getElementById("deCarrier").value,
+    ukCarrier: document.getElementById("ukCarrier").value,
+    caCarrier: document.getElementById("caCarrier").value
+  };
+}
+
+function analyze(){
+  var opts = readOptions();
+  ROWS.forEach(function(r, i){
+    r.idx = i;
+    r.country = r.country || countryFromStore(r.store) || "美国";
+    if (r.country === "美国"){ var u = usRegion(r.wh, r.address); r.zone = u[0]; r.basis = u[1]; }
+    else if (r.country === "加拿大"){
+      if (r.manualZone){ r.zone = r.manualZone; r.basis = "手动指定"; }
+      else { var c = caRegion(r.wh, r.address); r.zone = c[0]; r.basis = c[1]; }
+    }
+    else r.zone = r.country;
+    r.method = opts.methodSel === "auto" ? (r.method || (r.country === "美国" ? "海运" : "")) : opts.methodSel;
+  });
+
+  // 美国：每 5 个货件一组，组内天盛按 美东→美西→美中 占票
+  var priority = {美东:0, 美西:1, 美中:2, "":3};
+  var usRows = ROWS.filter(function(r){ return r.country === "美国"; });
+  usRows.forEach(function(r){ r.group = ""; r.assigned = ""; });
+  if (opts.useUsGroup){
+    // 优先按「货件名称」分组：同一货件名称下的 5 个货件才按 3+2 分配
+    var byName = {}, unnamed = [], gid = 0;
+    usRows.forEach(function(r){ if (r.name){ (byName[r.name] = byName[r.name] || []).push(r); } else { unnamed.push(r); } });
+    Object.keys(byName).forEach(function(name){
+      var group = byName[name];
+      if (group.length !== 5) return;
+      gid += 1;
+      var ordered = group.slice().sort(function(a,b){ return (priority[a.zone]-priority[b.zone]) || (a.idx-b.idx); });
+      ordered.forEach(function(r, k){
+        r.group = "第" + gid + "组";
+        r.assigned = k < opts.quota ? "天盛" : opts.other;
+      });
+    });
+    // 旧的简易输入没有货件名称时，退回按连续 5 个一组
+    for (var start = 0; start + 5 <= unnamed.length; start += 5){
+      var group = unnamed.slice(start, start + 5);
+      gid += 1;
+      var ordered = group.slice().sort(function(a,b){ return (priority[a.zone]-priority[b.zone]) || (a.idx-b.idx); });
+      ordered.forEach(function(r, k){
+        r.group = "第" + gid + "组";
+        r.assigned = k < opts.quota ? "天盛" : opts.other;
+      });
+    }
+  }
+
+  ROWS.forEach(function(r){
+    if (r.country === "美国"){
+      if (r.assigned) r.carrier = r.assigned;
+      else if (r.manualCarrier) r.carrier = r.manualCarrier;
+      else r.carrier = "";
+    } else if (r.country === "加拿大") r.carrier = opts.caCarrier;
+    else if (r.country === "英国") r.carrier = opts.ukCarrier;
+    else if (r.country === "德国") r.carrier = opts.deCarrier;
+    else r.carrier = "待定";
+    var channelCarrier = r.carrier || "天盛";
+    r.channel = r.carrier ? pickChannel(r, r.carrier, r.method, opts.airtype) : "";
+    if (r.carrier && !r.channel) r.channel = "待确认（该货代无此渠道）";
+    if (!r.carrier) r.channel = "待选货代";
+  });
+}
+
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+var CARRIER_THEME = {
+  "天盛":{cls:"ts"}, "瑞易达":{cls:"ryd"}, "铭运":{cls:"my"},
+  "待分配":{cls:"todo"}, "待定":{cls:"pending"}
+};
+function carrierTheme(name){ return CARRIER_THEME[name] || {cls:"other"}; }
+
+function render(){
+  var result = document.getElementById("result");
+  if (!ROWS.length){ result.innerHTML = '<div class="bad">没识别到货件。</div>'; return; }
+  analyze();
+  var groups = {};
+  ROWS.forEach(function(r){
+    var key = r.carrier || "待分配";
+    (groups[key] = groups[key] || []).push(r);
+  });
+  var fixed = ["天盛","瑞易达","铭运","待分配","待定"];
+  var keys = fixed.filter(function(k){ return groups[k]; }).concat(Object.keys(groups).filter(function(k){ return fixed.indexOf(k) < 0; }));
+  var chips = keys.map(function(key){
+    var theme = carrierTheme(key);
+    return `<span class="sum-chip ${theme.cls}">${esc(key)} <b>${groups[key].length}</b> 票</span>`;
+  }).join("");
+  var html = `<div class="lca-summary">${chips}<span class="sum-total">共 ${ROWS.length} 票</span></div>`;
+  keys.forEach(function(key){
+    var rows = groups[key], theme = carrierTheme(key), groupNames = [];
+    rows.forEach(function(r){ if (r.group && groupNames.indexOf(r.group) < 0) groupNames.push(r.group); });
+    var sub = groupNames.length ? `<span class="carrier-sub">${esc(groupNames.join(" / "))}</span>` : "";
+    html += `<section class="carrier-section ${theme.cls}">`;
+    html += `<div class="carrier-head"><span class="carrier-badge">${esc(key)}</span><span class="carrier-count">${rows.length} 票</span>${sub}</div>`;
+    html += `<table><thead><tr><th>货件号</th><th>店铺</th><th>国家</th><th>仓库</th><th>分区</th><th>方式</th><th>货代</th><th>渠道名</th><th>依据/提示</th></tr></thead><tbody>`;
+    rows.forEach(function(r){
+      var warn = "";
+      if (!r.wh) warn = '<span class="warn">缺仓库码</span>';
+      else if (r.country === "美国" && !r.zone) warn = '<span class="warn">仓库未收录，请补邮编</span>';
+      else if (!r.method) warn = '<span class="warn">未识别运输方式</span>';
+      if (r.channel && r.channel.indexOf("待确认") === 0) warn += ' <span class="bad">渠道待确认</span>';
+      var carrierCell;
+      if (r.country === "美国" && !r.assigned){
+        var sel = `<select onchange="window.__setCarrier('${r.no}', this.value)">`;
+        sel += `<option value=""${r.carrier ? "" : " selected"}>待选</option>`;
+        ["天盛","瑞易达","铭运"].forEach(function(c){
+          sel += `<option value="${c}"${r.carrier === c ? " selected" : ""}>${c}</option>`;
+        });
+        sel += `</select>`;
+        carrierCell = sel + (r.group ? ` <span class="group">${esc(r.group)}</span>` : ' <span class="group">单票</span>');
+      } else {
+        carrierCell = esc(r.carrier || "") + (r.group ? ` <span class="group">${esc(r.group)}</span>` : '');
+      }
+      var zoneCell = esc(r.zone || "");
+      if (r.country === "加拿大" && (r.basis === "加拿大仓不在东西名单" || r.basis === "手动指定")){
+        var zsel = `<select onchange="window.__setCaZone('${r.no}', this.value)">`;
+        ["加东","加西","其余"].forEach(function(z){ zsel += `<option value="${z}"${r.zone === z ? " selected" : ""}>${z}</option>`; });
+        zsel += `</select>`;
+        zoneCell = zsel;
+      }
+      html += `<tr><td class="shipno">${esc(r.no)}</td><td>${esc(r.store || "")}</td><td>${esc(r.country || "")}</td><td>${esc(r.wh || "")}</td><td>${zoneCell}</td><td>${esc(r.method || "")}</td><td>${carrierCell}</td><td class="ch">${esc(r.channel || "")}</td><td>${esc(r.basis || "")} ${warn}</td></tr>`;
+    });
+    html += `</tbody></table></section>`;
+  });
+  result.innerHTML = html;
+}
+
+window.__setCaZone = function(no, value){
+  var row = ROWS.filter(function(r){ return r.no === no; })[0];
+  if (row){ row.manualZone = value; render(); }
+};
+
+window.__setCarrier = function(no, value){
+  var row = ROWS.filter(function(r){ return r.no === no; })[0];
+  if (row){ row.manualCarrier = value; render(); }
+};
+
+function run(){
+  var text = document.getElementById("input").value || "";
+  ROWS = parseInput(text);
+  ROWS.forEach(function(r){ r.manualCarrier = ""; });
+  render();
+}
+
+document.getElementById("run").addEventListener("click", run);
+</script>
+<div class="meta" style="text-align:center;margin:18px 0 4px">v1.3.0 · 结果按货代分组 · GitHub: kuangkuang202522</div>
 </body>
 </html>

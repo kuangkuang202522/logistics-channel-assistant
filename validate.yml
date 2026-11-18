@@ -1,21 +1,14 @@
-name: validate-userscript
-
+name: Validate userscript
 on:
   push:
-    branches: [ main ]
   pull_request:
-
 jobs:
-  syntax-check:
+  syntax:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - name: Check userscript syntax
+          node-version: "20"
+      - name: Check JavaScript syntax
         run: node --check logistics-channel-assistant.user.js
