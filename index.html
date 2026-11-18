@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>物流渠道判断助手 v1.3.0</title>
+<title>物流渠道判断助手 v1.5.1</title>
 <style>
   body{margin:0;padding:16px;font:15px/1.7 -apple-system,"Microsoft YaHei",sans-serif;background:#eef2f7;color:#0f172a}
   h1{font-size:18px;margin:0 0 12px}
@@ -64,7 +64,7 @@
 </head>
 <body>
 <div class="topbar">
-  <div class="brand">物流渠道判断助手 <span class="ver">v1.3.0</span></div>
+  <div class="brand">物流渠道判断助手 <span class="ver">v1.5.1</span></div>
   <div class="actions">
     <a class="install" href="./logistics-channel-assistant.user.js">安装 / 更新篡改猴脚本</a>
     <a class="gh" href="https://github.com/kuangkuang202522/logistics-channel-assistant" target="_blank" rel="noopener">GitHub</a>
@@ -112,7 +112,10 @@ var SPECIAL = {
   MCI4:["美东","特例仓，需单独报关"], MEM1:["美中","特例仓"], RFD2:["美东","特例仓"],
   TOL3:["美东","特例仓"], LAN2:["美东","特例仓"], AKR1:["美东","特例仓"],
   LAX9:["美西","特例仓"], CMH2:["美东","特例仓"], CMH3:["美东","特例仓"],
-  BJC1:["美东","特例仓"]
+  BJC1:["美东","特例仓"],
+  IMO1:["美东","特例仓，天盛海运盛森提"],
+  ITX3:["美东","特例仓，天盛海运盛森提"],
+  ICA3:["美东","特例仓，天盛海运盛森提"]
 };
 var KNOWN = {
   GYR3:"美西",GYR2:"美西",SBD1:"美西",SCK4:"美西",ONT8:"美西",LGB8:"美西",VGT2:"美西",
@@ -139,6 +142,10 @@ var DE_TRUCK = {"铭运":"欧洲卡航-包税","瑞易达":"中欧卡航包税"}
 var UK_AIR = {"瑞易达":"英国空运-CN","铭运":"英国空派-递延不包税"};
 var UK_TRUCK = {"瑞易达":"英国卡航VAT","铭运":"英国卡航-递延"};
 var EXPRESS = {"瑞易达":"UPS-WE特快包税"};
+var TS_SPECIAL = ["IMO1","ITX3","ICA3"];
+var METHOD_NAMES = ["海运","空运","卡航","快递","铁路"];
+var COUNTRY_NAMES = ["美国","加拿大","德国","英国","法国","意大利","西班牙","荷兰","波兰"];
+var EU_TRUCK = {"瑞易达":"中欧丝路"};
 
 var ROWS = [];
 
@@ -168,9 +175,16 @@ function caRegion(code, address){
   return ["其余","加拿大仓不在东西名单"];
 }
 function countryFromStore(store){
-  var m = String(store||"").match(/号(美国|加拿大|德国|英国)站/);
+  var m = String(store||"").match(/号(美国|加拿大|德国|英国|法国|意大利|西班牙|荷兰|波兰)站/);
   return m ? m[1] : "";
 }
+function normalizeMethod(value){
+  var text = String(value || "").trim();
+  var m = text.match(/(海运|空运|卡航|快递|铁路)/);
+  return m ? m[1] : text;
+}
+function isKnownMethod(value){ return METHOD_NAMES.indexOf(value) >= 0; }
+function isTsSpecialWarehouse(code){ return TS_SPECIAL.indexOf(String(code || "").trim().toUpperCase()) >= 0; }
 function parseShipments(text){
   var re = /FBA[0-9A-Z]{8,}/g, map = {}, order = [], m, matches = [];
   while ((m = re.exec(text)) !== null) matches.push({no:m[0], idx:m.index});
@@ -191,6 +205,7 @@ function parseShipments(text){
     if (!rec.wh && wh) rec.wh = wh.toUpperCase();
     if (!rec.weight && weight) rec.weight = weight;
     if (!rec.method && method) rec.method = method;
+    if (!rec.autoMethod && method) rec.autoMethod = method;
     if (!rec.name && shipName) rec.name = shipName;
   });
   return order.map(function(no){ return map[no]; });
@@ -238,6 +253,10 @@ function pickChannel(row, carrier, method, airtype){
     if (method === "快递") return EXPRESS[carrier] || "";
     return "";
   }
+  if (["法国","意大利","西班牙","荷兰","波兰"].indexOf(c) >= 0){
+    if (method === "卡航") return EU_TRUCK[carrier] || "";
+    return "";
+  }
   return "";
 }
 
@@ -265,7 +284,12 @@ function analyze(){
       else { var c = caRegion(r.wh, r.address); r.zone = c[0]; r.basis = c[1]; }
     }
     else r.zone = r.country;
-    r.method = opts.methodSel === "auto" ? (r.method || (r.country === "美国" ? "海运" : "")) : opts.methodSel;
+    var rawMethod = r.manualMethod || r.autoMethod || r.method || "";
+    var normalized = normalizeMethod(rawMethod);
+    var detected = isKnownMethod(normalized);
+    r.methodMissing = !detected && !r.manualMethod && opts.methodSel === "auto";
+    if (opts.methodSel === "auto") r.method = detected ? normalized : (r.country === "美国" ? "海运" : "");
+    else { r.method = opts.methodSel; r.methodMissing = false; }
   });
 
   // 美国：每 5 个货件一组，组内天盛按 美东→美西→美中 占票
@@ -300,14 +324,16 @@ function analyze(){
 
   ROWS.forEach(function(r){
     if (r.country === "美国"){
+      if (r.method === "海运" && isTsSpecialWarehouse(r.wh)) r.assigned = "天盛";
       if (r.assigned) r.carrier = r.assigned;
-      else if (r.manualCarrier) r.carrier = r.manualCarrier;
+      else if (r.carrierTouched) r.carrier = r.manualCarrier;
+      else if (r.method === "海运") r.carrier = "天盛";
       else r.carrier = "";
     } else if (r.country === "加拿大") r.carrier = opts.caCarrier;
     else if (r.country === "英国") r.carrier = opts.ukCarrier;
     else if (r.country === "德国") r.carrier = opts.deCarrier;
+    else if (["法国","意大利","西班牙","荷兰","波兰"].indexOf(r.country) >= 0) r.carrier = "瑞易达";
     else r.carrier = "待定";
-    var channelCarrier = r.carrier || "天盛";
     r.channel = r.carrier ? pickChannel(r, r.carrier, r.method, opts.airtype) : "";
     if (r.carrier && !r.channel) r.channel = "待确认（该货代无此渠道）";
     if (!r.carrier) r.channel = "待选货代";
@@ -352,7 +378,7 @@ function render(){
       var warn = "";
       if (!r.wh) warn = '<span class="warn">缺仓库码</span>';
       else if (r.country === "美国" && !r.zone) warn = '<span class="warn">仓库未收录，请补邮编</span>';
-      else if (!r.method) warn = '<span class="warn">未识别运输方式</span>';
+      else if (r.methodMissing) warn = '<span class="warn">未识别运输方式，请选择</span>';
       if (r.channel && r.channel.indexOf("待确认") === 0) warn += ' <span class="bad">渠道待确认</span>';
       var carrierCell;
       if (r.country === "美国" && !r.assigned){
@@ -373,7 +399,11 @@ function render(){
         zsel += `</select>`;
         zoneCell = zsel;
       }
-      html += `<tr><td class="shipno">${esc(r.no)}</td><td>${esc(r.store || "")}</td><td>${esc(r.country || "")}</td><td>${esc(r.wh || "")}</td><td>${zoneCell}</td><td>${esc(r.method || "")}</td><td>${carrierCell}</td><td class="ch">${esc(r.channel || "")}</td><td>${esc(r.basis || "")} ${warn}</td></tr>`;
+      var methodSelected = r.manualMethod || r.method || "";
+      var autoLabel = r.autoMethod ? `自动（${r.autoMethod}）` : "自动";
+      var methodOptions = METHOD_NAMES.map(function(m){ return `<option value="${m}"${m === methodSelected ? " selected" : ""}>${m}</option>`; }).join("");
+      var methodCell = `<select onchange="window.__setMethod('${r.no}', this.value)" title="可随时改；选「自动」恢复自动识别"><option value=""${methodSelected ? "" : " selected"}>${autoLabel}</option>${methodOptions}</select>`;
+      html += `<tr><td class="shipno">${esc(r.no)}</td><td>${esc(r.store || "")}</td><td>${esc(r.country || "")}</td><td>${esc(r.wh || "")}</td><td>${zoneCell}</td><td>${methodCell}</td><td>${carrierCell}</td><td class="ch">${esc(r.channel || "")}</td><td>${esc(r.basis || "")} ${warn}</td></tr>`;
     });
     html += `</tbody></table></section>`;
   });
@@ -387,18 +417,26 @@ window.__setCaZone = function(no, value){
 
 window.__setCarrier = function(no, value){
   var row = ROWS.filter(function(r){ return r.no === no; })[0];
-  if (row){ row.manualCarrier = value; render(); }
+  if (row){ row.manualCarrier = value; row.carrierTouched = true; render(); }
+};
+
+window.__setMethod = function(no, value){
+  var row = ROWS.filter(function(r){ return r.no === no; })[0];
+  if (!row) return;
+  if (value){ row.manualMethod = value; row.method = value; row.methodMissing = false; }
+  else { row.manualMethod = ""; row.method = row.autoMethod || ""; row.methodMissing = !isKnownMethod(normalizeMethod(row.method)); }
+  render();
 };
 
 function run(){
   var text = document.getElementById("input").value || "";
   ROWS = parseInput(text);
-  ROWS.forEach(function(r){ r.manualCarrier = ""; });
+  ROWS.forEach(function(r){ r.manualCarrier = ""; r.manualMethod = ""; r.carrierTouched = false; });
   render();
 }
 
 document.getElementById("run").addEventListener("click", run);
 </script>
-<div class="meta" style="text-align:center;margin:18px 0 4px">v1.3.0 · 结果按货代分组 · GitHub: kuangkuang202522</div>
+<div class="meta" style="text-align:center;margin:18px 0 4px">v1.5.1 · 结果按货代分组 · GitHub: kuangkuang202522</div>
 </body>
 </html>

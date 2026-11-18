@@ -1,11 +1,12 @@
 // ==UserScript==
 // @name         物流渠道判断助手
 // @namespace    local.logistics.channel
-// @version      1.3.0
-// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、全选粘贴、美国5货件分组、加拿大分区、德英货代选择；结果按货代分组展示；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板
+// @version      1.5.1
+// @homepageURL  https://kuangkuang202522.github.io/logistics-channel-assistant/
 // @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @supportURL   https://github.com/kuangkuang202522/logistics-channel-assistant/issues
+// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别；v1.4.1 只在 FBA 货件页显示，切到其他页面自动隐藏；v1.5.0 美国海运5票组支持逐票改货代（3票天盛+2票其他），美国空运默认天盛、可选瑞易达；v1.5.1 结果按货代分组展示
 // @author       local
 // @match        https://www.mabangerp.com/*
 // @match        https://amz1.mabangerp.com/*
@@ -28,10 +29,27 @@
   // 只让 amz1 iframe 内的面板生效，避免出现两个按钮、其中一个读不到表格。
   const isOuterFbaPage = window.top === window.self &&
     /[?&]mod=main\.fbaCargo(?:&|$)/.test(location.search);
-  if (isOuterFbaPage) return;
+  if (isOuterFbaPage) {
+    console.info('[物流渠道助手] 外层 FBA 页面：脚本会在内层 amz1 iframe 中运行；若右下角没有按钮，请把篡改猴的「仅在顶层页面（框架）运行」设为「否」。');
+    return;
+  }
   const hasFbaIframe = window.top === window.self &&
     Array.from(document.querySelectorAll('iframe')).some(f => /fbaCargo/i.test(f.src || ''));
-  if (hasFbaIframe) return;
+  if (hasFbaIframe) {
+    console.info('[物流渠道助手] 检测到 fbaCargo iframe：请在篡改猴脚本设置中把「仅在顶层页面（框架）运行」设为「否」，否则内层表格读不到。');
+    return;
+  }
+
+  // v1.4.1：只在 FBA 货件页（内层 amz1/fbaCargo）显示。
+  // 其他页面不创建悬浮按钮，切走时自动隐藏，避免挡住别的按钮。
+  function isFbaCargoPage() {
+    return /^amz\d*\.mabangerp\.com$/i.test(location.hostname) &&
+      /\/fbaCargo(?:\/|$)/i.test(location.pathname);
+  }
+  if (!isFbaCargoPage() && !IS_INVOICE_PAGE) {
+    console.info('[物流渠道助手] 只在 FBA 货件页显示；当前页面不加载悬浮按钮。');
+    return;
+  }
 
   // 打印时隐藏脚本自己的悬浮按钮/面板和顶部提示，避免它们被排到第二页。
   const printGuard = document.createElement('style');
@@ -40,11 +58,17 @@
   (document.head || document.documentElement).appendChild(printGuard);
 
   // ---------- 规则数据（与 channel_pick.html 保持一致） ----------
+  // 这三个仓在天盛海运按美东处理，渠道选盛森提。
+  const TS_SPECIAL = ['IMO1', 'ITX3', 'ICA3'];
+  const METHOD_NAMES = ['海运', '空运', '卡航', '快递', '铁路'];
   const SPECIAL = {
     MCI4: ['美东', '特例仓，需单独报关'], MEM1: ['美中', '特例仓'], RFD2: ['美东', '特例仓'],
     TOL3: ['美东', '特例仓'], LAN2: ['美东', '特例仓'], AKR1: ['美东', '特例仓'],
     LAX9: ['美西', '特例仓'], CMH2: ['美东', '特例仓'], CMH3: ['美东', '特例仓'],
-    BJC1: ['美东', '特例仓']
+    BJC1: ['美东', '特例仓'],
+    IMO1: ['美东', '特例仓，天盛海运盛森提'],
+    ITX3: ['美东', '特例仓，天盛海运盛森提'],
+    ICA3: ['美东', '特例仓，天盛海运盛森提']
   };
   const KNOWN = {
     GYR3: '美西', GYR2: '美西', SBD1: '美西', SCK4: '美西', ONT8: '美西', LGB8: '美西', VGT2: '美西',
@@ -61,6 +85,11 @@
     '瑞易达': { 美东: '美森限时达', 美中: '美中-美森正班卡派', 美西: '美西-美森正班卡派' },
     '铭运': { 美东: '美森快船正班船-UPS派', 美中: '美中-美森快船正班船-卡派', 美西: '美西-美森快船正班船-卡派' }
   };
+  // 美国空运：默认天盛；瑞易达走美国空运-CN。药贴只影响天盛的渠道（天敏提）。
+  const US_AIR = {
+    '天盛': { '普货': '天翼提', '药贴': '天敏提' },
+    '瑞易达': '美国空运-CN'
+  };
   const CA_SEA = {
     '铭运': { 加东: '加东-美转加美森正班限时达-卡派', 加西: '加西-美转加美森正班限时达-卡派', 其余: '美转加美森正班限时达-UPS派' },
     // 瑞易达加拿大是一条大区渠道，不分加东加西（channel_pick.html 旧版漏了这条）
@@ -71,14 +100,16 @@
   const DE_TRUCK = { '铭运': '欧洲卡航-包税', '瑞易达': '中欧卡航包税' };
   const UK_AIR = { '瑞易达': '英国空运-CN', '铭运': '英国空派-递延不包税' };
   const UK_TRUCK = { '瑞易达': '英国卡航VAT', '铭运': '英国卡航-递延' };
+  // 瑞易达卡航：非德国、非英国（法国/意大利/西班牙/荷兰/波兰）走中欧丝路
+  const EU_TRUCK = { '瑞易达': '中欧丝路' };
   const EXPRESS = { '瑞易达': 'UPS-WE特快包税' };
+  const COUNTRY_NAMES = ['美国', '加拿大', '德国', '英国', '法国', '意大利', '西班牙', '荷兰', '波兰'];
 
   // ---------- 生成发货单：货代 id 与实际渠道名 ----------
   const CARRIER_ID = { '天盛': 36298, '铭运': 25932, '瑞易达': 27168 };
   const CARRIER_LABEL = { '天盛': '天盛物流', '铭运': '广东铭运物流', '瑞易达': '瑞易达物流' };
 
   // ---------- 结果分组主题（按货代分开显示） ----------
-  const CARRIER_ORDER = ['天盛', '瑞易达', '铭运', '待分配', '待定'];
   const CARRIER_THEME = {
     '天盛': { cls: 'ts' },
     '瑞易达': { cls: 'ryd' },
@@ -105,7 +136,7 @@
       '英国空运VAT-CN', '美国空运-CN', '加拿大快递', '加拿大空运-CN', '欧洲空运-CN',
       'UPS-WE包税', 'UPS-WE特快包税', '大陆UPS红单', '英国空运-CN', '中欧卡航包税',
       '英国卡航VAT', '英国铁路普快VAT', '英国铁路特快VAT', '加拿大限时达',
-      '加拿大美森海卡', '中欧班列普快'
+      '加拿大美森海卡', '中欧班列普快', '中欧丝路'
     ]
   };
   const CHANNEL_ALIAS = {
@@ -127,6 +158,7 @@
     '铭运|英国卡航-递延': '英国卡航-递延（不包税）',
     '瑞易达|美中-美森正班卡派': '美森卡派',
     '瑞易达|美西-美森正班卡派': '美森卡派',
+    '瑞易达|美国空运-CN': '美国空运-CN',
     '瑞易达|加拿大海运': '加拿大美森海卡',
     '瑞易达|欧洲空运CN': '欧洲空运-CN',
     '瑞易达|英国空运-CN': '英国空运-CN',
@@ -175,6 +207,89 @@
     return m ? m[1] : '';
   }
 
+  function countryFromAddress(address) {
+    const text = String(address || '');
+    if (/\bGB\b|united kingdom/i.test(text)) return '英国';
+    if (/germany|deutschland/i.test(text)) return '德国';
+    if (/canada/i.test(text)) return '加拿大';
+    if (/\bUS\b|united states/i.test(text)) return '美国';
+    return '';
+  }
+
+  function normalizeMethod(value) {
+    const text = String(value || '').trim();
+    const m = text.match(/(海运|空运|卡航|快递|铁路)/);
+    return m ? m[1] : text;
+  }
+
+  function isKnownMethod(value) {
+    return METHOD_NAMES.indexOf(value) >= 0;
+  }
+
+  function isTsSpecialWarehouse(code) {
+    return TS_SPECIAL.indexOf(String(code || '').trim().toUpperCase()) >= 0;
+  }
+
+  // VXE 的运输方式字段在不同页面可能是 transport / logistics_name / 数字编码。
+  // 逐个字段找，再从常见嵌套对象里找，避免第一个字段是数字就误判为空。
+  function methodFromItem(item) {
+    if (!item) return '';
+    const keys = [
+      'transport', 'transport_name', 'transportName',
+      'logistics_name', 'logisticsName',
+      'delivery_type', 'deliveryType',
+      'method', 'shipping_method', 'shippingMethod',
+      'logistics_channel', 'logisticsChannel', 'channel_name', 'channelName', 'logisticsChannelName',
+      // 马帮 FBA 货件页的运输方式写在备注字段 printRemark 里，例如「空运」「卡航：新品」。
+      'printRemark', 'print_remark', 'printRemarks', 'print_remarks',
+      'remark', 'shippName', 'shipment_name', 'shipmentName'
+    ];
+    for (const key of keys) {
+      const method = normalizeMethod(item[key]);
+      if (isKnownMethod(method)) return method;
+    }
+    const nestedKeys = ['deliveryList', 'stockList', 'logistics', 'logisticsInfo', 'transportInfo', 'channelInfo', 'channel'];
+    for (const key of nestedKeys) {
+      const value = item[key];
+      if (!value) continue;
+      const list = Array.isArray(value) ? value : [value];
+      for (const entry of list) {
+        if (!entry || typeof entry !== 'object') continue;
+        for (const childKey of keys) {
+          const method = normalizeMethod(entry[childKey]);
+          if (isKnownMethod(method)) return method;
+        }
+      }
+    }
+    return '';
+  }
+
+  // 如果 VXE 数据里没有运输方式，再从当前表格行文本里兜底找一次。
+  // 按行建一次缓存，避免 SKU 多时每一票都扫一遍 DOM。
+  let domMethodMap = null;
+  function methodFromDom(no) {
+    if (!domMethodMap) {
+      domMethodMap = new Map();
+      const rows = Array.from(document.querySelectorAll('.vxe-body--row, .vxe-table--body tr'));
+      for (const row of rows) {
+        const text = row.innerText || '';
+        const noMatch = text.match(/FBA[0-9A-Z]{8,}/);
+        const methodMatch = text.match(/(海运|空运|卡航|快递|铁路)/);
+        if (noMatch && methodMatch && !domMethodMap.has(noMatch[0])) {
+          domMethodMap.set(noMatch[0], methodMatch[1]);
+        }
+      }
+    }
+    if (domMethodMap.has(no)) return domMethodMap.get(no);
+    const all = document.body.innerText || '';
+    const idx = all.indexOf(no);
+    if (idx >= 0) {
+      const m = all.slice(idx, idx + 500).match(/(海运|空运|卡航|快递|铁路)/);
+      if (m) return m[1];
+    }
+    return '';
+  }
+
   function pick(obj, keys) {
     if (!obj) return '';
     for (const key of keys) {
@@ -192,25 +307,62 @@
     if (/加拿大|canada/i.test(text) || /^(ca|can)$/i.test(text)) return '加拿大';
     if (/德国|germany|deutschland/i.test(text) || /^(de|ger)$/i.test(text)) return '德国';
     if (/英国|united kingdom/i.test(text) || /^(uk|gb|gbr)$/i.test(text)) return '英国';
-    return text;
+    if (/法国|france/i.test(text) || /^(fr|fra)$/i.test(text)) return '法国';
+    if (/意大利|italy/i.test(text) || /^(it|ita)$/i.test(text)) return '意大利';
+    if (/西班牙|spain/i.test(text) || /^(es|esp)$/i.test(text)) return '西班牙';
+    if (/荷兰|netherlands/i.test(text) || /^(nl|nld)$/i.test(text)) return '荷兰';
+    if (/波兰|poland/i.test(text) || /^(pl|pol)$/i.test(text)) return '波兰';
+    return '';
+  }
+
+  function normalizeCountry(value, store, address) {
+    const c = countryFromCode(value);
+    if (COUNTRY_NAMES.indexOf(c) >= 0) return c;
+    // 马帮 VXE 的 country 有时是数字/内部 ID；此时用店铺名、FBA 地址兜底。
+    return countryFromStore(store) || countryFromAddress(address) || '美国';
   }
 
   // 优先从页面表格的 Vue/vxe 数据里读；读不到再解析页面文本。
+  // 合并所有 vxe 表格，避免只读第一张表导致货件不全。
+  function shippNoOf(item) {
+    return pick(item, ['shippNo', 'shipp_no', 'shipmentNo', 'shipment_no', 'fbaNo', 'fba_no', 'shippCode', 'shipp_code', 'shipmentCode', 'shipment_code', 'fbaCode', 'fba_code']).trim();
+  }
+
   function readVxeRows() {
+    domMethodMap = null;
     const tables = Array.from(document.querySelectorAll('.vxe-table'));
+    const rows = [], seen = new Set();
     for (const table of tables) {
       const vm = table.__vue__;
       if (!vm || typeof vm.getTableData !== 'function') continue;
-      const data = vm.getTableData().fullData || [];
-      const rows = [], seen = new Set();
+      const tableData = vm.getTableData() || {};
+      const full = tableData.fullData;
+      let data = (Array.isArray(full) && full.length ? full : (tableData.tableData || vm.tableData || []));
+      if (!Array.isArray(data)) data = [];
+
+      // 运输方式（空运/卡航等）通常写在子 SKU 行的 printRemark 上，父货件行反而为空。
+      // 先按 parentId 和货件号把子行的方式收集起来，再回填给父货件。
+      const childMethodByParent = new Map();
+      const childMethodByNo = new Map();
+      for (const item of data) {
+        if (!item || !item.parentId) continue;
+        const method = methodFromItem(item);
+        if (!method) continue;
+        const pid = String(item.parentId);
+        if (!childMethodByParent.has(pid)) childMethodByParent.set(pid, method);
+        const cno = shippNoOf(item);
+        if (cno && !childMethodByNo.has(cno)) childMethodByNo.set(cno, method);
+      }
+
       for (const item of data) {
         if (!item || item.parentId) continue; // 子商品行不参与货件级操作
-        const no = pick(item, ['shippNo', 'shipp_no', 'shipmentNo', 'shipment_no', 'fbaNo', 'fba_no', 'shippCode', 'shipp_code', 'shipmentCode', 'shipment_code', 'fbaCode', 'fba_code']).trim();
+        const no = shippNoOf(item);
         if (!/^(FBA[0-9A-Z]{8,}|[0-9A-Z]{6,}WFB)$/.test(no) || seen.has(no)) continue;
         seen.add(no);
         const address = item.fbaWarehouseAddress && typeof item.fbaWarehouseAddress === 'object'
           ? (item.fbaWarehouseAddress.address || item.fbaWarehouseAddress.postcode || '')
           : pick(item, ['address', 'fbaWarehouseAddress', 'warehouse_address', 'warehouseAddress']);
+        const store = pick(item, ['shop_name', 'shopName', 'store_name', 'storeName', 'shop']);
 
         // 发货仓库 = 子商品行上的 warehouseId / warehouse_name，不是 FBA 目的仓
         const stocks = Array.isArray(item.stockList) ? item.stockList : [];
@@ -225,28 +377,29 @@
           whPairs.push({ id: wid, name: wname });
         }
         const parentWhId = Number((String(item.warehouseId || '').match(/\d+/) || [])[0]) || 0;
+        const parentWhName = pick(item, ['warehouse_name', 'warehouseName']);
         const warehouseId = whPairs.length === 1 ? whPairs[0].id : (whPairs.length ? 0 : parentWhId);
-        const warehouseName = whPairs.length === 1 ? whPairs[0].name : '';
+        const warehouseName = whPairs.length === 1 ? whPairs[0].name : (whPairs.length ? '' : parentWhName);
 
         rows.push({
           no,
           id: Number(item.id) || 0,
-          shopName: pick(item, ['shop_name', 'shopName', 'store_name', 'storeName', 'shop']),
-          store: pick(item, ['shop_name', 'shopName', 'store_name', 'storeName', 'shop']),
-          country: countryFromCode(pick(item, ['country', 'country_name', 'countryName', 'amazonsite'])),
+          shopName: store,
+          store,
+          country: normalizeCountry(pick(item, ['country_name', 'countryName', 'amazonsite', 'amazon_site', 'country_code', 'countryCode', 'country']), store, address),
           wh: pick(item, ['logistics_code', 'logisticsCode', 'warehouse', 'warehouseCode', 'warehouse_code', 'fba_warehouse', 'fbaWarehouse']),
-          method: pick(item, ['transport', 'transport_name', 'transportName', 'logistics_name', 'logisticsName', 'delivery_type', 'deliveryType', 'method', 'shipping_method', 'shippingMethod']),
+          method: methodFromItem(item) || childMethodByParent.get(String(item.id)) || childMethodByNo.get(no) || methodFromDom(no),
           weight: pick(item, ['total_weights', 'totalWeight', 'weight', '装箱总重量']),
           address: String(address || ''),
           name: pick(item, ['shipment_name', 'shipmentName', 'shippName', 'name', 'content', 'remark', '货件名称']),
+          batch: pick(item, ['batchNo', 'batch_no', 'batchNumber', 'batch_number', 'inbound_planid', 'inboundPlanId', 'inbound_plan_id', 'planId', 'plan_id']),
           warehouseId,
           warehouseName,
           multiWarehouse: whPairs.length > 1
         });
       }
-      if (rows.length) return rows;
     }
-    return [];
+    return rows;
   }
 
   function readDomRows() {
@@ -276,7 +429,7 @@
       const t = best.innerText || '';
       const wh = (t.match(/物流中心编码\s*([A-Z0-9]{3,6})/) || [])[1] || '';
       const store = (t.match(/店铺\s*([0-9]+号[^\s\n]+?站)/) || [])[1] || '';
-      const country = (t.match(/国家\s*(美国|加拿大|德国|英国)/) || [])[1] || countryFromStore(store);
+      const country = normalizeCountry((t.match(/国家\s*(美国|加拿大|德国|英国|法国|意大利|西班牙|荷兰|波兰)/) || [])[1], store);
       const name = (t.match(/货件名称\s*([A-Za-z0-9_-]+)/) || [])[1] || '';
       const weight = (t.match(/装箱总重量\s*([0-9.]+)\s*kg/) || [])[1] || '';
       const methods = t.match(/(海运|空运|卡航|快递|铁路)/g);
@@ -354,8 +507,9 @@
     if (c === '美国') {
       if (method === '海运') return (US_SEA[carrier] && US_SEA[carrier][zone]) || '';
       if (method === '空运') {
-        if (carrier === '天盛') return airtype === '药贴' ? '天敏提' : '天翼提';
-        return '';
+        const air = US_AIR[carrier];
+        if (!air) return '';
+        return typeof air === 'string' ? air : (air[airtype] || air['普货'] || '');
       }
       if (method === '快递') return EXPRESS[carrier] || '';
       return '';
@@ -375,6 +529,10 @@
       if (method === '空运') return UK_AIR[carrier] || '';
       if (method === '卡航') return UK_TRUCK[carrier] || '';
       if (method === '快递') return EXPRESS[carrier] || '';
+      return '';
+    }
+    if (['法国', '意大利', '西班牙', '荷兰', '波兰'].indexOf(c) >= 0) {
+      if (method === '卡航') return EU_TRUCK[carrier] || '';
       return '';
     }
     return '';
@@ -430,7 +588,7 @@
     analyze();
     const map = new Map();
     ROWS.forEach(r => {
-      if (!r.carrier || !r.channel || r.channel.indexOf('待') === 0) return;
+      if (!r.carrier || !r.channel || r.channel.indexOf('待') === 0 || r.methodMissing) return;
       const carrierId = CARRIER_ID[r.carrier];
       if (!carrierId) return;
       const options = MB_CHANNELS[r.carrier] || [];
@@ -849,6 +1007,8 @@
       input[type=number]{width:64px}
       .lca-primary{border:0;border-radius:8px;background:#2563eb;color:#fff;font-weight:600;padding:8px 16px;cursor:pointer}
       .lca-primary:hover{background:#1d4ed8}
+      .lca-primary.lca-warn{background:#f59e0b}
+      .lca-primary.lca-warn:hover{background:#d97706}
       .lca-secondary{border:1px solid #d9dce1;border-radius:8px;background:#fff;color:#334155;padding:8px 12px;cursor:pointer}
       .lca-secondary:hover{background:#f8fafc}
       .lca-hint{font-size:12px;color:#6b7280;margin-top:8px;line-height:1.5}
@@ -910,8 +1070,6 @@
       </div>
       <div class="lca-body">
         <div class="lca-card">
-          <textarea id="lca-input" placeholder="把马帮货件页「全选复制」的内容粘进来（会自己找：货件单号、店铺、国家、物流中心编码、运输方式）。
-也兼容旧格式：每行「货件号 仓库码 [地址]」，或只写仓库码。"></textarea>
           <div class="lca-row">
             <label>运输方式
               <select id="lca-method">
@@ -931,17 +1089,18 @@
             <label>美国空运货型
               <select id="lca-airtype"><option>普货</option><option>药贴</option></select>
             </label>
+            <label>美国空运货代
+              <select id="lca-usair"><option>天盛</option><option>瑞易达</option></select>
+            </label>
           </div>
           <div class="lca-row">
             <label>德国货代 <select id="lca-de"><option>铭运</option><option>瑞易达</option></select></label>
             <label>英国货代 <select id="lca-uk"><option>瑞易达</option><option>铭运</option></select></label>
             <label>加拿大货代 <select id="lca-ca"><option>铭运</option><option>瑞易达</option></select></label>
-            <button id="lca-run" class="lca-primary" type="button">判断</button>
-            <button id="lca-read" class="lca-secondary" type="button">读取当前页</button>
-            <button id="lca-clear" class="lca-secondary" type="button">清空</button>
+            <button id="lca-read" class="lca-primary" type="button">快速读取（约0.5秒）</button>
             <button id="lca-copy" class="lca-secondary" type="button">复制结果</button>
           </div>
-          <div class="lca-hint">打开面板会自动读取当前页的 FBA 货件；也可以把马帮货件页全选复制的内容粘进来手动判断。美国：同一个「货件名称」下的 5 个货件为一组，天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家；不是 5 个一组的单个货件逐票手动选货代。其他国家按上面选定的货代自动带出渠道。</div>
+          <div class="lca-hint">打开面板会自动快速读取当前页（约0.5秒）。如果提示识别不全，再点一次同一按钮做全量识别。美国海运：优先按马帮批次号、其次按「货件名称」，5票一组；都没有就按连续5票归组。天盛先占美东、再美西、最后美中（默认 3 票），其余给本周另一家。结果表里每一票的货代都能单独改，改完立即生效；改组设置/配额会重置本组手工货代。美国空运默认天盛，可在这里选瑞易达，也可逐票改。其他国家按上面选定的货代自动带出渠道。</div>
           <div id="lca-status" class="lca-hint"></div>
         </div>
         <div class="lca-card" id="lca-result"><div class="lca-hint">结果会显示在这里。</div></div>
@@ -952,31 +1111,258 @@
 
   const $ = (sel) => shadow.querySelector(sel);
   const panel = $('#lca-panel'), btn = $('#lca-btn'), resultEl = $('#lca-result'), statusEl = $('#lca-status');
+  const readBtn = $('#lca-read');
   const genEl = $('#lca-gen');
   let GEN_GROUPS = [];
   let autoRead = false;
+  let quickIncomplete = false;
 
   function setStatus(text) {
     if (statusEl) statusEl.textContent = text || '';
   }
 
+  function setReadButton(mode) {
+    if (!readBtn) return;
+    readBtn.classList.toggle('lca-warn', mode === 'full');
+    if (mode === 'full') readBtn.textContent = '识别不全，点此全量识别';
+    else if (mode === 'reading-full') readBtn.textContent = '全量识别中…';
+    else if (mode === 'reading-quick') readBtn.textContent = '快速识别中…';
+    else readBtn.textContent = '快速读取（约0.5秒）';
+  }
+  setReadButton('quick');
+
+  // v1.4.1：SPA 路由变化时同步显示/隐藏；离开 FBA 货件页后按钮不再挡其他页面。
+  function syncFbaVisibility() {
+    const onFba = isFbaCargoPage();
+    host.style.display = onFba ? '' : 'none';
+    if (!onFba) {
+      panel.classList.remove('open');
+      btn.textContent = '物流渠道';
+    }
+  }
+  syncFbaVisibility();
+  let lastHref = location.href;
+  setInterval(function () {
+    if (location.href !== lastHref) {
+      lastHref = location.href;
+      syncFbaVisibility();
+    }
+  }, 800);
+  window.addEventListener('popstate', syncFbaVisibility);
+  window.addEventListener('hashchange', syncFbaVisibility);
+
+  function getVxeTableVms() {
+    return Array.from(document.querySelectorAll('.vxe-table'))
+      .map(t => t.__vue__)
+      .filter(vm => vm && typeof vm.getTableData === 'function');
+  }
+
+  function vxeDataCount() {
+    let count = 0;
+    getVxeTableVms().forEach(vm => {
+      try {
+        const d = vm.getTableData() || {};
+        count += ((d.fullData && d.fullData.length ? d.fullData : d.tableData) || []).length;
+      } catch (e) {}
+    });
+    return count;
+  }
+
+  // SKU 多时，VXE 表格可能是虚拟滚动/分批加载；先展开并滚到底，等行数稳定再读。
+  // 快速统计当前页：不展开、不滚动，只读现有 VXE 数据。
+  // expected = min(服务端 total, pageSize)，用来区分“真的只有 1–4 票”和“5 票但没加载全”。
+  function quickPageStats() {
+    const tables = Array.from(document.querySelectorAll('.vxe-table'));
+    const seen = new Set();
+    for (const table of tables) {
+      const vm = table.__vue__;
+      if (!vm || typeof vm.getTableData !== 'function') continue;
+      const td = vm.getTableData() || {};
+      const data = td.fullData || td.tableData || [];
+      for (const item of data) {
+        if (!item || item.parentId) continue;
+        const no = shippNoOf(item);
+        if (no) seen.add(no);
+      }
+    }
+    let total = 0, pageSize = 0;
+    for (const table of tables) {
+      let vm = table.__vue__;
+      while (vm) {
+        const d = vm._data || {};
+        const t = Number(d.total);
+        const p = Number(d.pageSize);
+        if (Number.isFinite(t) && Number.isFinite(p) && Array.isArray(d.tableData)) {
+          total = t; pageSize = p; break;
+        }
+        vm = vm.$parent;
+      }
+      if (total > 0 && pageSize > 0) break;
+    }
+    const expected = total > 0 && pageSize > 0 ? Math.min(total, pageSize) : seen.size;
+    return { unique: seen.size, total, pageSize, expected };
+  }
+
+  async function prepareTableForRead(expected = 0) {
+    const tables = Array.from(document.querySelectorAll('.vxe-table'));
+    if (!tables.length) return;
+
+    // 父货件行已经够数了：不需要展开、不需要滚动，直接返回。
+    // 多 SKU 的慢滚动只在“少读了父行”时才用。
+    const before = quickPageStats();
+    if (expected > 0 && before.unique >= expected) {
+      await new Promise(r => setTimeout(r, 100));
+      return;
+    }
+
+    tables.forEach(t => {
+      const vm = t.__vue__;
+      if (!vm) return;
+      try {
+        if (typeof vm.setAllTreeExpand === 'function') vm.setAllTreeExpand(true);
+      } catch (e) {}
+    });
+    await new Promise(r => setTimeout(r, 500));
+
+    for (const t of tables) {
+      const candidates = Array.from(t.querySelectorAll(
+        '.vxe-table--body-wrapper, .vxe-table--body-inner-wrapper, .vxe-table--body'
+      )).filter(el => el && el.scrollHeight > el.clientHeight + 10);
+      const wrap = candidates.sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+        || t.querySelector('.vxe-table--body-wrapper')
+        || t.querySelector('.vxe-table--body');
+      if (!wrap) continue;
+      const original = wrap.scrollTop;
+      const max = Math.max(wrap.scrollHeight, wrap.clientHeight);
+      // 固定小步长：小屏幕/高缩放下也不会因为步数上限而漏掉中间行。
+      const step = Math.max(160, Math.min(320, Math.floor((wrap.clientHeight || 400) * 0.5)));
+      const steps = Math.min(300, Math.ceil(max / step));
+      // 下 -> 上 -> 下，强制虚拟滚动把中间批次也加载出来。
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i <= steps; i++) {
+          wrap.scrollTop = Math.min(max, i * step);
+          await new Promise(r => setTimeout(r, 90));
+        }
+        wrap.scrollTop = max;
+        await new Promise(r => setTimeout(r, 500));
+        if (pass === 0) {
+          for (let i = steps; i >= 0; i--) {
+            wrap.scrollTop = Math.min(max, i * step);
+            await new Promise(r => setTimeout(r, 60));
+          }
+          wrap.scrollTop = 0;
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      wrap.scrollTop = original;
+    }
+
+    // 等行数真正稳定：连续 8 次（约 2.4 秒）不变才退出，最多等 30 秒。
+    let last = -1, stable = 0;
+    for (let i = 0; i < 100; i++) {
+      const count = vxeDataCount();
+      if (count === last) stable += 1; else stable = 0;
+      last = count;
+      if (count > 0 && stable >= 8) break;
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  function mergeRowsByNo(base, extra) {
+    const map = new Map();
+    [...(base || []), ...(extra || [])].forEach(r => {
+      if (!r || !r.no) return;
+      map.set(r.no, Object.assign({}, map.get(r.no) || {}, r));
+    });
+    return Array.from(map.values());
+  }
+
+  // 美国按“货件名称”5票一组；返回不足5票的名称分组，用于判断表格是否没加载全。
+  function incompleteUsGroups(rows) {
+    const counts = new Map();
+    (rows || []).forEach(r => {
+      if (!r || r.country !== '美国' || !r.name) return;
+      counts.set(r.name, (counts.get(r.name) || 0) + 1);
+    });
+    return Array.from(counts.entries()).filter(([, n]) => n > 0 && n < 5);
+  }
+
   let loadToken = 0;
-  function loadFromPage(renderNow = true, retry = 0, token = 0) {
+  let preparedForToken = 0;
+  async function loadFromPage(renderNow = true, retry = 0, token = 0, accumulated = null, forceFull = false) {
     if (!token) token = ++loadToken;
     if (token !== loadToken) return;
+
+    const stats = quickPageStats();
+    const expected = stats.expected;
+    // v1.4.0：默认永远先走快速路径，不自动全量。
+    // 快速读不全时，只把同一个按钮切换成“全量识别”，由用户手动再点一次。
+    const needFull = !!forceFull;
+
+    if (preparedForToken !== token && document.querySelectorAll('.vxe-table').length) {
+      if (needFull) {
+        setStatus(`正在全量识别（当前页约 ${expected || '?'} 票，SKU 较多，可能需要几秒）…`);
+        setReadButton('reading-full');
+        await prepareTableForRead(expected);
+      } else {
+        setStatus(`正在快速识别（当前页 ${stats.unique || expected || '?'} 票）…`);
+        setReadButton('reading-quick');
+        await new Promise(r => setTimeout(r, 150));
+      }
+      preparedForToken = token;
+      if (token !== loadToken) return;
+    }
+
     const found = readPageRows();
     if (found.rows.length) {
-      ROWS = found.rows;
+      ROWS = mergeRowsByNo(accumulated, found.rows);
       ROWS_SOURCE = found.source;
-      ROWS.forEach(r => { r.manualCarrier = ''; r.manualZone = ''; });
+      ROWS.forEach(r => {
+        if (r.autoMethod === undefined) r.autoMethod = r.method || '';
+        r.manualCarrier = ''; r.manualZone = ''; r.manualMethod = ''; r.carrierTouched = false;
+      });
       if (renderNow) render();
-      setStatus(`已自动读取当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。如需换页，翻页后再点「读取当前页」。`);
-    } else if (retry < 24) {
-      setStatus(`正在等待货件表格加载…（${retry + 1}/24）`);
-      setTimeout(() => loadFromPage(renderNow, retry + 1, token), 500);
+
+      const short = expected > 0 && ROWS.length < expected;
+      const incompleteGroups = ROWS.length === 5 ? incompleteUsGroups(ROWS) : [];
+      const incomplete = short || incompleteGroups.length > 0;
+
+      // 全量路径：仍然自动重试 3 次，尽量把虚拟滚动里没加载的行读出来。
+      if (needFull && incomplete && retry < 3) {
+        const desc = incompleteGroups.length
+          ? incompleteGroups.map(([name, n]) => `「${name}」${n}票`).join('、')
+          : `只读到 ${ROWS.length}/${expected || '?'} 票`;
+        setStatus(`全量识别已读 ${ROWS.length} 票，但 ${desc}，正在重新滚动读取…（${retry + 1}/3）`);
+        preparedForToken = 0;
+        await new Promise(r => setTimeout(r, 900));
+        return loadFromPage(renderNow, retry + 1, token, ROWS, true);
+      }
+
+      quickIncomplete = incomplete;
+      setReadButton(incomplete ? 'full' : 'quick');
+
+      const missing = ROWS.filter(r => r.methodMissing).length;
+      const incompleteNote = incomplete
+        ? (short
+            ? `只读到 ${ROWS.length}/${expected || '?'} 票，可能未加载全；`
+            : `有5票组不足5票（${incompleteGroups.map(([name, n]) => `「${name}」${n}票`).join('、')}），可能未加载全；`)
+        : '';
+      const nextHint = incomplete
+        ? '再点一次「识别不全，点此全量识别」进行全量识别。'
+        : '如需换页，翻页后再点「快速读取」。';
+      setStatus(`已${needFull ? '全量' : '快速'}识别当前页 ${ROWS.length} 票（${found.source === 'vxe' ? '表格数据' : '页面文本'}）。`
+        + incompleteNote
+        + (missing ? `有 ${missing} 票未识别运输方式，可在顶部「运输方式」批量选，或在结果表「方式」列逐票选；` : '')
+        + nextHint);
+    } else if (retry < 30) {
+      // 表格如果出现得晚，给两次重新展开/滚动的机会。
+      if (retry === 10 || retry === 20) preparedForToken = 0;
+      setStatus(`正在等待货件表格加载…（${retry + 1}/30）`);
+      setTimeout(() => loadFromPage(renderNow, retry + 1, token, accumulated, forceFull), 500);
     } else {
       if (renderNow) resultEl.innerHTML = '<div class="lca-hint">当前页未识别到 FBA 货件。</div>';
-      setStatus('当前页未识别到 FBA 货件；请确认在马帮 FBA 货件页、页面已加载完，或点「读取当前页」重试。');
+      setReadButton('quick');
+      setStatus('当前页未识别到 FBA 货件；请确认在马帮 FBA 货件页、页面已加载完，或点「快速读取」重试。');
     }
   }
 
@@ -993,26 +1379,47 @@
   btn.addEventListener('click', () => togglePanel());
   $('#lca-min').addEventListener('click', () => togglePanel(false));
   $('#lca-close').addEventListener('click', () => togglePanel(false));
-  $('#lca-read').addEventListener('click', () => loadFromPage());
+  if (readBtn) {
+    readBtn.addEventListener('click', () => {
+      if (quickIncomplete) {
+        quickIncomplete = false;
+        loadFromPage(true, 0, 0, null, true);
+      } else {
+        loadFromPage();
+      }
+    });
+  }
 
   function readOptions() {
+    const quotaRaw = parseInt($('#lca-quota').value, 10);
     return {
       methodSel: $('#lca-method').value,
       useUsGroup: $('#lca-usgroup').checked,
-      quota: parseInt($('#lca-quota').value, 10) || 0,
+      quota: Number.isFinite(quotaRaw) ? Math.max(0, Math.min(5, quotaRaw)) : 0,
       other: $('#lca-other').value,
       airtype: $('#lca-airtype').value,
+      usAirCarrier: $('#lca-usair').value || '天盛',
       deCarrier: $('#lca-de').value,
       ukCarrier: $('#lca-uk').value,
       caCarrier: $('#lca-ca').value
     };
   }
 
+  function resetUsCarrierOverrides(kind = 'all') {
+    ROWS.forEach(r => {
+      if (r.country !== '美国') return;
+      if (kind === 'sea' && r.method !== '海运') return;
+      if (kind === 'air' && r.method !== '空运') return;
+      r.carrierTouched = false;
+      r.manualCarrier = '';
+    });
+  }
+
   function analyze() {
     const opts = readOptions();
     ROWS.forEach((r, i) => {
       r.idx = i;
-      r.country = r.country || countryFromStore(r.store) || '美国';
+      if (COUNTRY_NAMES.indexOf(r.country) < 0) r.country = countryFromStore(r.store) || countryFromAddress(r.address) || '美国';
       if (r.country === '美国') {
         const u = usRegion(r.wh, r.address);
         r.zone = u[0]; r.basis = u[1];
@@ -1022,7 +1429,16 @@
       } else {
         r.zone = r.country;
       }
-      r.method = opts.methodSel === 'auto' ? (r.method || (r.country === '美国' ? '海运' : '')) : opts.methodSel;
+      const rawMethod = r.manualMethod || r.autoMethod || r.method || '';
+      const normalizedMethod = normalizeMethod(rawMethod);
+      const detectedMethod = isKnownMethod(normalizedMethod);
+      r.methodMissing = !detectedMethod && !r.manualMethod && opts.methodSel === 'auto';
+      if (opts.methodSel === 'auto') {
+        r.method = detectedMethod ? normalizedMethod : (r.country === '美国' ? '海运' : '');
+      } else {
+        r.method = opts.methodSel;
+        r.methodMissing = false;
+      }
     });
 
     const priority = { 美东: 0, 美西: 1, 美中: 2, '': 3 };
@@ -1030,38 +1446,59 @@
     usRows.forEach(r => { r.group = ''; r.assigned = ''; });
 
     if (opts.useUsGroup) {
-      const byName = {}, unnamed = [];
+      const seaRows = usRows.filter(r => r.method === '海运');
+      const groupedRows = new Set();
       let gid = 0;
-      usRows.forEach(r => { if (r.name) (byName[r.name] = byName[r.name] || []).push(r); else unnamed.push(r); });
-      Object.keys(byName).forEach(name => {
-        const group = byName[name];
-        if (group.length !== 5) return;
+      const assignGroup = (group) => {
+        if (!group.length) return;
         gid += 1;
         const ordered = group.slice().sort((a, b) => (priority[a.zone] - priority[b.zone]) || (a.idx - b.idx));
         ordered.forEach((r, k) => {
           r.group = '第' + gid + '组';
           r.assigned = k < opts.quota ? '天盛' : opts.other;
+          groupedRows.add(r);
         });
+      };
+      // 1) 优先按马帮批次号分组；同一批次正好 5 票最可靠。
+      const byBatch = new Map();
+      seaRows.forEach(r => {
+        if (!r.batch) return;
+        if (!byBatch.has(r.batch)) byBatch.set(r.batch, []);
+        byBatch.get(r.batch).push(r);
       });
-      for (let start = 0; start + 5 <= unnamed.length; start += 5) {
-        const group = unnamed.slice(start, start + 5);
-        gid += 1;
-        const ordered = group.slice().sort((a, b) => (priority[a.zone] - priority[b.zone]) || (a.idx - b.idx));
-        ordered.forEach((r, k) => {
-          r.group = '第' + gid + '组';
-          r.assigned = k < opts.quota ? '天盛' : opts.other;
-        });
+      byBatch.forEach(group => { if (group.length === 5) assignGroup(group); });
+      // 2) 没有批次号或批次不齐的，再按货件名称分；名称必须正好 5 票。
+      const byName = new Map();
+      seaRows.filter(r => !groupedRows.has(r)).forEach(r => {
+        if (!r.name) return;
+        if (!byName.has(r.name)) byName.set(r.name, []);
+        byName.get(r.name).push(r);
+      });
+      byName.forEach(group => { if (group.length === 5) assignGroup(group); });
+      // 3) 名称不同或没有名称的，按页面顺序把连续 5 票美国海运归一组。
+      const remaining = seaRows
+        .filter(r => !groupedRows.has(r))
+        .sort((a, b) => a.idx - b.idx);
+      for (let start = 0; start + 5 <= remaining.length; start += 5) {
+        assignGroup(remaining.slice(start, start + 5));
       }
     }
 
     ROWS.forEach(r => {
       if (r.country === '美国') {
-        if (r.assigned) r.carrier = r.assigned;
-        else if (r.manualCarrier) r.carrier = r.manualCarrier;
+        // 手工改过的货代优先；否则用 5 票组默认，再否则海运默认天盛、空运默认美国空运货代。
+        if (r.carrierTouched) r.carrier = r.manualCarrier || '';
+        else if (r.assigned) r.carrier = r.assigned;
+        else if (r.method === '海运') r.carrier = '天盛';
+        else if (r.method === '空运') r.carrier = opts.usAirCarrier || '天盛';
         else r.carrier = '';
+
+        // IMO1/ITX3/ICA3 是盛森提特例仓：海运即使超过天盛配额也强制归天盛。
+        if (r.method === '海运' && isTsSpecialWarehouse(r.wh)) r.carrier = '天盛';
       } else if (r.country === '加拿大') r.carrier = opts.caCarrier;
       else if (r.country === '英国') r.carrier = opts.ukCarrier;
       else if (r.country === '德国') r.carrier = opts.deCarrier;
+      else if (['法国', '意大利', '西班牙', '荷兰', '波兰'].indexOf(r.country) >= 0) r.carrier = '瑞易达';
       else r.carrier = '待定';
 
       r.channel = r.carrier ? pickChannel(r, r.carrier, r.method, opts.airtype) : '';
@@ -1074,7 +1511,7 @@
     if (!genEl) return;
     if (ROWS_SOURCE !== 'vxe') {
       GEN_GROUPS = [];
-      genEl.innerHTML = '<div class="lca-hint">生成发货单需要读取马帮表格数据；当前是粘贴文本模式，请在马帮 FBA 货件页点「读取当前页」。</div>';
+      genEl.innerHTML = '<div class="lca-hint">生成发货单需要读取马帮表格数据；当前是页面文本模式，请在马帮 FBA 货件页点「快速读取」。</div>';
       return;
     }
     const groups = buildGenerationGroups();
@@ -1090,7 +1527,10 @@
     groups.sort((a, b) => (order[a.carrier] ?? 9) - (order[b.carrier] ?? 9));
     GEN_GROUPS = groups;
     if (!groups.length) {
-      genEl.innerHTML = '<div class="lca-hint">没有可生成的行：需要货代和渠道都已确定。</div>';
+      const missing = ROWS.filter(r => r.methodMissing).length;
+      genEl.innerHTML = `<div class="lca-hint">${missing
+        ? `有 ${missing} 票运输方式未确认，请先在结果表「方式」列选择。`
+        : '没有可生成的行：需要货代和渠道都已确定。'}</div>`;
       return;
     }
 
@@ -1108,7 +1548,7 @@
       const bad = g.invalid ? `<div class="bad">${esc(g.invalid)}</div>` : '';
       html += `<tr>
         <td>${esc(g.warehouseName || ('仓库 ' + g.warehouseId))}${bad}</td>
-        <td><span class="carrier-text">${esc(g.carrier)}</span></td>
+        <td>${esc(g.carrier)}</td>
         <td><select data-gen-key="${esc(g.key)}">${options}</select></td>
         <td>${g.rows.length}</td>
         <td class="muted">${g.shippNos.map(n => `<span class="shipno">${esc(n)}</span>`).join(' ')}</td>
@@ -1156,14 +1596,15 @@
         let warn = '';
         if (!r.wh) warn = '<span class="warn">缺仓库码</span>';
         else if (r.country === '美国' && !r.zone) warn = '<span class="warn">仓库未收录，请补邮编</span>';
-        else if (!r.method) warn = '<span class="warn">未识别运输方式</span>';
+        else if (r.methodMissing) warn = '<span class="warn">未识别运输方式，请选择</span>';
         if (r.channel && r.channel.indexOf('待确认') === 0) warn += ' <span class="bad">渠道待确认</span>';
 
         let carrierCell;
-        if (r.country === '美国' && !r.assigned) {
+        if (r.country === '美国') {
           const options = ['天盛', '瑞易达', '铭运'].map(c =>
             `<option value="${esc(c)}"${r.carrier === c ? ' selected' : ''}>${esc(c)}</option>`).join('');
-          carrierCell = `<select data-carrier-no="${esc(r.no)}"><option value=""${r.carrier ? '' : ' selected'}>待选</option>${options}</select>`
+          carrierCell = `<select data-carrier-no="${esc(r.no)}" title="可单独改这一票；改组设置会重置">`
+            + `<option value=""${r.carrier ? '' : ' selected'}>待选</option>${options}</select>`
             + (r.group ? ` <span class="group">${esc(r.group)}</span>` : ' <span class="group">单票</span>');
         } else {
           carrierCell = esc(r.carrier || '') + (r.group ? ` <span class="group">${esc(r.group)}</span>` : '');
@@ -1176,14 +1617,22 @@
           zoneCell = `<select data-cazone-no="${esc(r.no)}">${options}</select>`;
         }
 
+        const methodSelected = r.manualMethod || r.method || '';
+        const autoLabel = r.autoMethod ? `自动（${r.autoMethod}）` : '自动';
+        const methodOptions = METHOD_NAMES.map(m =>
+          `<option value="${esc(m)}"${m === methodSelected ? ' selected' : ''}>${esc(m)}</option>`).join('');
+        const methodCell = `<select data-method-no="${esc(r.no)}" title="可随时改；选「自动」恢复自动识别">`
+          + `<option value=""${methodSelected ? '' : ' selected'}>${esc(autoLabel)}</option>`
+          + `${methodOptions}</select>`;
+
         html += `<tr>
-          <td class="shipno">${esc(r.no || '')}</td><td>${esc(r.store || '')}</td><td>${esc(r.country || '')}</td>
-          <td>${esc(r.wh || '')}</td><td>${zoneCell}</td><td>${esc(r.method || '')}</td>
+          <td class="shipno">${esc(r.no)}</td><td>${esc(r.store || '')}</td><td>${esc(r.country || '')}</td>
+          <td>${esc(r.wh || '')}</td><td>${zoneCell}</td><td>${methodCell}</td>
           <td>${carrierCell}</td><td class="ch">${esc(r.channel || '')}</td>
           <td>${esc(r.basis || '')} ${warn}</td>
         </tr>`;
       });
-      html += '</tbody></table></section>';
+      html += `</tbody></table></section>`;
     });
 
     resultEl.innerHTML = html;
@@ -1192,13 +1641,46 @@
 
   resultEl.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.matches('select[data-carrier-no]')) {
+    if (t.matches('select[data-method-no]')) {
+      const row = ROWS.find(r => r.no === t.getAttribute('data-method-no'));
+      if (row) {
+        if (t.value) {
+          row.manualMethod = t.value;
+          row.method = t.value;
+          row.methodMissing = false;
+        } else {
+          // 选「自动」：清掉手动值，回到 printRemark/页面识别结果。
+          row.manualMethod = '';
+          row.method = row.autoMethod || '';
+          row.methodMissing = !isKnownMethod(normalizeMethod(row.method));
+        }
+        render();
+      }
+    } else if (t.matches('select[data-carrier-no]')) {
       const row = ROWS.find(r => r.no === t.getAttribute('data-carrier-no'));
-      if (row) { row.manualCarrier = t.value; render(); }
+      if (row) { row.manualCarrier = t.value; row.carrierTouched = true; render(); }
     } else if (t.matches('select[data-cazone-no]')) {
       const row = ROWS.find(r => r.no === t.getAttribute('data-cazone-no'));
       if (row) { row.manualZone = t.value; render(); }
     }
+  });
+
+  // 分组/配额/另一家变化：清掉美国海运的手工货代，让新的组默认生效。
+  ['#lca-usgroup', '#lca-other'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('change', () => { resetUsCarrierOverrides('sea'); render(); });
+  });
+  const quotaEl = $('#lca-quota');
+  if (quotaEl) quotaEl.addEventListener('input', () => { resetUsCarrierOverrides('sea'); render(); });
+  const usAirEl = $('#lca-usair');
+  if (usAirEl) usAirEl.addEventListener('change', () => { resetUsCarrierOverrides('air'); render(); });
+  // 运输方式/空运货型/其他国家货代变化：直接重算。
+  ['#lca-method', '#lca-airtype', '#lca-de', '#lca-uk', '#lca-ca'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('change', () => {
+      if (sel === '#lca-method') resetUsCarrierOverrides('all');
+      render();
+    });
   });
 
   genEl.addEventListener('change', (e) => {
@@ -1232,21 +1714,6 @@
     }
   });
 
-  function run() {
-    const text = $('#lca-input').value.trim();
-    if (!text) {
-      loadFromPage();
-      return;
-    }
-    ROWS = parseInput(text);
-    ROWS_SOURCE = 'text';
-    ROWS.forEach(r => { r.manualCarrier = ''; r.manualZone = ''; });
-    setStatus('已按粘贴内容判断。');
-    render();
-  }
-
-  $('#lca-run').addEventListener('click', run);
-  $('#lca-clear').addEventListener('click', () => { $('#lca-input').value = ''; ROWS = []; resultEl.innerHTML = '<div class="lca-hint">结果会显示在这里。</div>'; });
   $('#lca-copy').addEventListener('click', async () => {
     if (!ROWS.length) return;
     const lines = ['货件号\t店铺\t国家\t仓库\t分区\t方式\t货代\t渠道名'];
