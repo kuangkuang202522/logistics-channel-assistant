@@ -1,46 +1,47 @@
 # 物流渠道判断助手
 
-马帮 FBA 货件页悬浮物流渠道判断工具。自动读取当前页货件，按美国 5 货件分组、加拿大分区、德英货代规则判断渠道；结果按货代分组展示。
+马帮 / Teambition 页面悬浮物流渠道判断助手。
 
-## 安装
+当前版本：**v1.5.2**（基于 v1.5.1，保留美国 5 票分组、逐票改货代、结果按货代分组等功能）
 
-1. 浏览器安装 Tampermonkey（篡改猴）。
-2. 打开 [logistics-channel-assistant.user.js](./logistics-channel-assistant.user.js)，按 Tampermonkey 提示安装。
-3. 打开马帮 FBA 货件页，右下角出现「物流渠道」按钮。
+## v1.5.2 更新
 
-## v1.5.1
+- 德国卡航统一选择 `欧洲卡航-递延（不包税）`
+- 英国卡航统一选择 `英国卡航-递延（不包税）`
+- 兼容旧结果：
+  - `欧洲卡航-包税` → `欧洲卡航-递延（不包税）`
+  - `中欧卡航包税` → `欧洲卡航-递延（不包税）`
+  - `英国卡航VAT` → `英国卡航-递延（不包税）`
 
-在 v1.5.0 基础上只加界面分组，不删除已有能力：
+## 安装 / 更新
 
-- 结果按货代分组：天盛 / 瑞易达 / 铭运 / 待分配 / 待定
-- 每组独立卡片，带彩色左边条、徽章、票数
-- 顶部汇总 chips
-- 货件号加粗、等宽字体、按货代配色
-- 生成发货单表按货代排序、加货代分隔行
-- 面板加宽、样式优化
+已安装 v1.5.1 的用户不需要手动重装：
 
-保留的 v1.5.0 / v1.4.x 能力：
+1. 打开 Tampermonkey 管理面板；
+2. 找到「物流渠道判断助手」；
+3. 点「检查更新」，或等待自动更新；
+4. 确认版本变为 `1.5.2` 后刷新马帮 FBA 货件页。
 
-- 美国海运 5 票组支持逐票改货代（3 票天盛 + 2 票其他）
-- 美国空运默认天盛，可选瑞易达
-- 默认 0.5 秒快速识别，识别不全时同一按钮手动切换全量识别
-- 只在 FBA 货件页显示，切到其他页面自动隐藏
-- IMO1 / ITX3 / ICA3 特例仓天盛海运固定盛森提
-- 运输方式读取子 SKU 行 `printRemark`
-- 方式列可反复修改，选「自动」恢复自动识别
+新安装：
 
-## 文件
+```text
+https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
+```
 
-| 文件 | 用途 |
-| --- | --- |
-| `index.html` | GitHub Pages 网页版 |
-| `logistics-channel-assistant.user.js` | 篡改猴脚本（自动更新） |
-| `validate.yml` | 语法检查配置 |
-| `.nojekyll` | GitHub Pages 关闭 Jekyll |
-| `README.md` | 本文件 |
+在已安装 Tampermonkey 的浏览器中打开上面的 raw 地址，点「安装」即可。
 
-## 更新
+## 文件说明
 
-把 `@version` 往上加（如 `1.5.2`），提交脚本；Tampermonkey 会按 `@updateURL` 自动检查更新。
+- `logistics-channel-assistant.user.js`：Tampermonkey 脚本（GitHub 自动更新源）
+- `index.html`：GitHub Pages 安装页
+- `.nojekyll`：GitHub Pages 配置
+- `.github/workflows/validate.yml`：每次推送自动做 JS 语法检查
 
-> 如果仓库名不是 `logistics-channel-assistant` 或分支不是 `main`，同步修改脚本顶部的 `@updateURL` / `@downloadURL`。
+## 维护
+
+修改脚本后：
+
+1. 更新 `@version`；
+2. 提交并推送 `logistics-channel-assistant.user.js`；
+3. GitHub Pages / raw 地址会自动指向新版本；
+4. 已安装用户下次「检查更新」即可升级。
