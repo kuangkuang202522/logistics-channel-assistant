@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         物流渠道判断助手
 // @namespace    local.logistics.channel
-// @version      1.5.2
+// @version      1.5.3
 // @homepageURL  https://kuangkuang202522.github.io/logistics-channel-assistant/
 // @updateURL    https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/kuangkuang202522/logistics-channel-assistant/main/logistics-channel-assistant.user.js
 // @supportURL   https://github.com/kuangkuang202522/logistics-channel-assistant/issues
-// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别；v1.4.1 只在 FBA 货件页显示，切到其他页面自动隐藏；v1.5.0 美国海运5票组支持逐票改货代（3票天盛+2票其他），美国空运默认天盛、可选瑞易达；v1.5.1 结果按货代分组展示；v1.5.2 德国/英国卡航统一选择「欧洲卡航-递延（不包税）」「英国卡航-递延（不包税）」渠道
+// @description  马帮/TB 页面悬浮物流渠道判断：自动读取当前页、美国5货件分组、加拿大分区、德英货代选择；支持按仓库+货代+渠道自动勾选货件并生成发货单；打印时自动隐藏面板；新增 IMO1/ITX3/ICA3 特例仓与空运识别兜底；v1.4.0 默认0.5秒快速识别，识别不全时同一按钮手动切换全量识别；v1.4.1 只在 FBA 货件页显示，切到其他页面自动隐藏；v1.5.0 美国海运5票组支持逐票改货代（3票天盛+2票其他），美国空运默认天盛、可选瑞易达；v1.5.1 结果按货代分组展示；v1.5.2 德国/英国卡航统一选择「欧洲卡航-递延（不包税）」「英国卡航-递延（不包税）」渠道；v1.5.3 6号德国站保留包税渠道，其余德英卡航仍走递延（不包税）
 // @author       local
 // @match        https://www.mabangerp.com/*
 // @match        https://amz1.mabangerp.com/*
@@ -98,6 +98,7 @@
   const CA_AIR = { '瑞易达': '加拿大空运-CN', '铭运': '加拿大空运' };
   const DE_AIR = { '铭运': '欧洲空派包税B价-大陆飞', '瑞易达': '欧洲空运CN' };
   const DE_TRUCK = { '铭运': '欧洲卡航-递延（不包税）', '瑞易达': '欧洲卡航-递延（不包税）' };
+  const DE_TRUCK_TAX = { '铭运': '欧洲卡航-包税', '瑞易达': '中欧卡航包税' };
   const UK_AIR = { '瑞易达': '英国空运-CN', '铭运': '英国空派-递延不包税' };
   const UK_TRUCK = { '瑞易达': '英国卡航-递延（不包税）', '铭运': '英国卡航-递延（不包税）' };
   // 瑞易达卡航：非德国、非英国（法国/意大利/西班牙/荷兰/波兰）走中欧丝路
@@ -526,7 +527,11 @@
     }
     if (c === '德国') {
       if (method === '空运') return DE_AIR[carrier] || '';
-      if (method === '卡航') return DE_TRUCK[carrier] || '';
+      if (method === '卡航') {
+        // 6号德国站是例外：仍走包税渠道
+        if (/6号德国/.test(String(row.store || ''))) return DE_TRUCK_TAX[carrier] || '';
+        return DE_TRUCK[carrier] || '';
+      }
       return '';
     }
     if (c === '英国') {
